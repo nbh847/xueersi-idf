@@ -12,6 +12,8 @@
 *.swo
 *.bak
 *.tmp
+.tmp/
+backup/
 
 # Log files
 *.log
@@ -84,3 +86,11 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# Local AI and IDE assistant state
+.vscode/
+.agents/
+.arts/
+.claude/
+.codeartsdoer/
+.codex/

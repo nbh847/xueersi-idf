@@ -16,12 +16,19 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF，使用 LVGL 9.x 驱动 ST7735 SPI 屏幕，并提供硬件状态分页 UI。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；当前实现是 `main/main.c` 中的 15 页硬件状态 Dashboard，Launcher 与 App Framework 尚未实现。
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，三重缓冲，稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。
-- GD32 固件仍在开发中，目前公开的 GD32 工程主要完成了 USB 转串口功能。
-- GD32 侧与 ESP32 间的 LED、电机等控制协议仍在斟酌当中，正在考虑是否兼容原有协议。欢迎大家测试或在 Issues 里提出建议。
+- GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现下文所述的 I2C `0x40` LED、电机从机协议。
+- ESP32 侧已经按原有 `0x40` 协议实现 LED、电机命令；该协议与 GD32 实机固件的联调状态仍待确认。欢迎大家测试或在 Issues 里提出建议。
+
+## 开发文档导航
+
+- [`AGENTS.md`](AGENTS.md)：Agent 与贡献者进入仓库时的执行规则、构建命令和验证要求。
+- [`ROADMAP.md`](ROADMAP.md)：当前进度、下一步、待确认事项及最近验证记录，是项目状态源。
+- [`docs/project-overview.md`](docs/project-overview.md)：当前代码结构、启动链、双 MCU 边界和开发入口。
+- [`docs/xiaomiao_firmware_v0.1_design.md`](docs/xiaomiao_firmware_v0.1_design.md)：Launcher 与 App Framework 的目标设计，尚未全部实现。
 
 ## 原理图与鸣谢
 
