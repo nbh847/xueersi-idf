@@ -4,6 +4,10 @@
 
 依次阅读 `ROADMAP.md`、`README.md` 和 `docs/project-overview.md`。前者是当前进度源，`README.md` 保存硬件事实与协议，项目概览解释代码现状和开发入口。`docs/xiaomiao_firmware_v0.1_design.md` 是目标架构方案，不代表相关模块已经实现。
 
+## Goal 文档与历史记录
+
+每个施工任务使用 `goals/YYYYMMDD-HHMM-<goal-slug>.md` 保存目标、边界、实现决策、检查点、验收证据和未验证范围。Goal 完成后必须保留原文，只在文档中更新状态和交付结果；不要因为功能已完成而删除。保留这些记录可以让后续 Agent 复用已确认的技术决策、验证证据和已知限制，避免重复调研或误判项目状态。当前进度和唯一状态入口仍由 `ROADMAP.md` 维护。
+
 ## 项目结构与模块组织
 
 - `main/main.c` 是当前 ESP32-WROVER-B 固件的唯一业务源文件，包含 LVGL 9.5 硬件 Dashboard 及屏幕、按键、ADC、I2C、蜂鸣器和 MicroSD 驱动。当前尚无 `apps/`、`services/` 或 `bsp/` 分层。
