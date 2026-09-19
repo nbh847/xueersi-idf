@@ -36,6 +36,8 @@ idf.py build
 idf.py -p COM5 flash monitor
 ```
 
+环境加载使用官方 `export.bat` / `export.ps1`（需在 CMD/PowerShell 中执行，MSYS shell 会因 `MSYSTEM` 被拒绝）。当安装布局非默认（Python venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下）时，用进程级 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH` 指向实际位置，不改系统环境；确认版本用 `python "$env:IDF_PATH\tools\idf.py" --version`（PATH 中的 `idf.py.exe` 包装器会显示自身版本）。不依赖现有 `build/` 缓存的可复现基线构建命令见 `AGENTS.md`；2026-09-19 已在隔离构建目录完成全新配置构建与二次构建验证，记录见 `ROADMAP.md`。
+
 GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标器件为 GD32F350G8，依赖 GigaDevice DFP 3.4.0。`go.py` 仅用于原厂 MicroPython 固件环境下的硬件探查，不参与 ESP-IDF 构建。
 
 ## 目标架构与演进约束

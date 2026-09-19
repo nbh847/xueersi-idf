@@ -10,32 +10,66 @@
 - GD32 工程当前只确认实现 USB CDC、USART1 桥和 ESP32 IO0/EN 控制；I2C `0x40` LED/电机从机协议未在仓库源码中实现。
 - Launcher、App Framework、Service 和 BSP 分层仍处于设计阶段。
 
-## 进行中
+## 当前开发节点
 
-- 以现有 15 页 Dashboard 为回归基线，规划 v0.1 Launcher 与 App Framework 的小步落地顺序。
-- 核对 GD32 实机固件与 README 中 `0x40` 协议的真实对应关系。
+- 节点 0“构建基线恢复”已完成（2026-09-19，全新配置构建、烧录和基础交互验证通过；未覆盖全部外设回归）。施工文档为 `goals/20260919-1834-build-baseline.md`。
+- 下一个开发节点为节点 1“App Framework”，尚未开始。
+- GD32 实机固件与 README 中 `0x40` 协议的对应关系仍在待确认状态，不阻塞不依赖 LED、电机的 v0.1 框架开发。
+
+## 有序开发节点
+
+节点定义、交付和验收标准见 `docs/xiaomiao_firmware_v0.1_design.md` 第 15 节；此处只维护唯一进度状态。
+
+- [x] 节点 0：构建基线恢复。
+- [ ] 节点 1：App Framework。
+- [ ] 节点 2：Navigation。
+- [ ] 节点 3：Launcher。
+- [ ] 节点 4：Hardware Test App。
+- [ ] 节点 5：Games 占位 App。
+- [ ] 节点 6：PC Monitor UI。
+- [ ] 节点 7：Tools App。
+- [ ] 节点 8：Settings UI。
+- [ ] 节点 9：Settings Service 与 NVS。
+- [ ] 节点 10：Wi-Fi Service。
+- [ ] 节点 11：PC Monitor 通信。
+- [ ] 节点 12：Audio Service。
+- [ ] 节点 13：首个正式游戏。
+- [ ] 节点 14：Storage Service。
+- [ ] 节点 15：Assets 与文件系统。
+- [ ] 节点 16：GD32 `0x40` 协议补全。
 
 ## 下一步
 
-- 为硬件访问提取最小 BSP/Service 接口，先保持 UI 与外部行为不变。
-- 建立 App Registry 与 Launcher 骨架，再把 Dashboard 封装为 Hardware Test App。
-- 增加至少可在 CI 执行的 ESP-IDF 构建检查；对可分离逻辑补充单元测试。
-- 实机验证 MicroSD 初始化及 GPIO22 冲突，并据结果修正文档或驱动。
+1. 实施节点 1，只建立 App 接口、Registry、Manager 和最小测试 App，不提前开发 Launcher。
+2. 节点 1 验收后再实施节点 2，建立统一导航和返回机制。
+3. 在节点 4“Hardware Test App”中逐项回归 LED、电机、MicroSD、MPU6050 等外设。
 
 ## 待确认与已知风险
 
 - `docs/xiaomiao_firmware_v0.1_design.md` 记录过 `sdmmc_card_init failed` 和 GPIO22 冲突，但本次仅做源码与构建环境检查，尚未实机复现。
 - README 记录的 GD32 LED/电机协议已被 ESP32 代码使用，但当前 GD32 工程缺少对应实现，双 MCU 联调结果待确认。
-- 当前 Windows 工作站的 `D:\esp\v6.1\esp-idf\export.ps1` 指向不存在的用户级 Python 环境；缓存构建实际使用 `D:\Espressif\tools\python\v6.1\venv`。后续需要修复本机 ESP-IDF 环境后再验证全新配置构建。
+- 本机 ESP-IDF 安装为非默认布局：Python venv 3.14.7 位于 `<IDF_TOOLS_PATH>/tools/python/v6.1/venv`（不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH` 后再运行官方 `export.ps1`；constraints 文件曾错位于工具目录的 `tools/` 子目录，2026-09-19 经授权复制到工具目录根修复（原文件保留）。MSYS/Git Bash 中执行 export 会因 `MSYSTEM` 变量被拒绝。PATH 中的 `idf.py.exe`（idf-exe 1.0.3 包装器）`--version` 显示包装器自身版本，确认 IDF 版本需用 `python "$env:IDF_PATH\tools\idf.py" --version`。
+- 节点 0 已完成基础实机验证；LED、电机、MicroSD、MPU6050 等完整外设回归仍待节点 4。
 
 ## 最近完成
 
+- 2026-09-19 20:35：完成节点 0 补充实机验证，固件可正常烧录和启动，15 个 Dashboard 页面均可翻页，A/B 键操作正常；未将未测试外设标记为已验证。
+- 2026-09-19 20:23：修正节点 0 Goal 与路线图中的机器绝对路径表述，改用环境变量占位符；保留 `.tmp/` 中的本机诊断证据。
+- 2026-09-19 19:52：完成节点 0“构建基线恢复”：定位环境错配根因（`IDF_TOOLS_PATH` 未设置、venv 非默认布局、`MSYSTEM` 泄漏、constraints 文件错位），以进程级环境变量修复并经授权复制 constraints 文件到工具目录根；在 `.tmp/build-baseline/` 完成全新配置构建与二次构建验证；构建入口与环境要求写入 `AGENTS.md` 与 `docs/project-overview.md`。
+- 2026-09-19 18:34：创建节点 0 的 Goal 施工文档，明确目标、边界、检查点、失败路径、验收标准和交付内容。
+- 2026-09-19 18:27：将后续功能拆分为节点 0～16，明确版本归属、依赖顺序、交付内容和验收结果；进度统一由本文件维护。
 - 2026-09-19 18:20：将仓库内所有 `.vscode/` 目录列为本地配置并取消 Git 跟踪，本地文件继续保留；`.devcontainer/` 仍作为可复用开发环境配置保留。
 - 2026-09-19 18:18：补充 Git 忽略规则，排除任务临时目录、本地备份及 AI/IDE 助手状态。
 - 2026-09-19 18:12：建立 `AGENTS.md`、项目概览和路线图，明确当前实现、目标架构、双 MCU 边界与验证入口。
 
 ## 最近验证
 
+- 2026-09-19 20:35（节点 0 实机验证）：目标设备烧录成功并正常运行；15 个 Dashboard 页面翻页、A/B 键操作通过。未覆盖：LED、电机、MicroSD、MPU6050 等逐项外设测试。
+- 2026-09-19 20:25（主 Agent 独立复核）：在新的临时构建目录重新加载 ESP-IDF v6.1，直接调用 `tools/idf.py` 完成全新配置和 1833 个目标的完整构建；产物与分区尺寸均通过，同一目录第二次构建 exit=0，`dependencies.lock` 哈希保持不变。当时未包含实机验证，后续结果见 20:35 记录。
+- 2026-09-19 20:23（节点 0 文档复核）：确认 Goal 验收条款与可提交文档一致；本机绝对路径仅保留在被忽略的 `.tmp/` 证据中。
+- 2026-09-19 19:52（节点 0 验收）：环境为 ESP-IDF v6.1（`python "$env:IDF_PATH\tools\idf.py" --version`，exit=0）。在 `.tmp/build-baseline/` 以 `SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci"` 完成 `set-target esp32`（exit=0）与完整 `build`（exit=0，1833 个 ninja 目标），产物 `bootloader.bin` 30496 字节、`partition-table.bin` 3072 字节、`xiaomiao.elf` 9420368 字节、`xiaomiao.bin` 0xa2ac0 字节；分区检查通过，应用分区 0x100000 剩余 0x5d540（36%）。同一命令二次构建 exit=0。`dependencies.lock` 全程哈希 `e9da2f2a` 不变，`git diff --check` 通过，工作区改动未超出本 Goal 授权文件。未验证：烧录与目标板运行。
+- 2026-09-19 18:34：核对节点 0 Goal 文档与 `AGENTS.md`、项目概览及路线图，确认未扩大到业务代码、GD32 固件或系统级配置修改。
+- 2026-09-19 18:27：交叉核对 `ROADMAP.md`、项目概览和 v0.1 设计目标，确认节点 1～8 覆盖 v0.1 验收范围，节点 9～15 对应 v0.2～v0.5，节点 16 保持为独立硬件支线。
 - 2026-09-19 18:20：使用 `git ls-files` 和 `git check-ignore` 核对根目录及 GD32 子目录中的 `.vscode/` 文件，确认取消跟踪后由统一规则排除。
 - 2026-09-19 18:18：使用 `git check-ignore` 核对新增规则，确认本地工具状态与临时路径被排除。
 - 2026-09-19 18:15：直接调用构建缓存记录的 Ninja 完成增量构建和分区尺寸检查；`xiaomiao.bin` 为 `0xa2ac0` 字节，应用分区剩余 36%。该结果不等同于已验证全新配置构建。

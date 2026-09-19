@@ -14,7 +14,7 @@
 
 ## 构建、烧录与开发命令
 
-先加载 ESP-IDF 环境，并在仓库根目录执行：
+先加载 ESP-IDF 环境（Windows CMD/PowerShell 运行官方 `export.bat` / `export.ps1`；MSYS/Git Bash 会因 `MSYSTEM` 变量被拒绝，需在干净 shell 中执行），并在仓库根目录执行：
 
 ```bash
 idf.py set-target esp32   # 首次配置目标芯片
@@ -22,6 +22,20 @@ idf.py build              # 配置、解析依赖并编译固件
 idf.py -p COM5 flash      # 将固件烧录到指定串口
 idf.py -p COM5 monitor    # 查看启动日志和运行状态
 ```
+
+可复现的全新基线构建（不依赖根目录 `build/` 与本地 `sdkconfig`，配置只来自 `sdkconfig.defaults` 和 `sdkconfig.ci`）：
+
+```bash
+idf.py -B .tmp/build-baseline/build -D SDKCONFIG=$(pwd)/.tmp/build-baseline/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" set-target esp32
+idf.py -B .tmp/build-baseline/build -D SDKCONFIG=$(pwd)/.tmp/build-baseline/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" build
+```
+
+环境要求与已验证事实：
+
+- 本仓库以 ESP-IDF 6.1 为唯一目标版本；`idf.py --version` 应输出 `ESP-IDF v6.1`。
+- 若安装使用非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），以进程级环境变量 `IDF_TOOLS_PATH` 和 `IDF_PYTHON_ENV_PATH` 指向实际安装位置，不修改系统环境。
+- `PATH` 中的 `idf.py.exe`（idf-exe 包装器）`--version` 显示的是包装器自身版本；确认 IDF 版本应使用 `python "$env:IDF_PATH\tools\idf.py" --version`。
+- 2026-09-19 已按上述命令完成全新配置构建与二次构建验证，结果见 `ROADMAP.md`。
 
 GD32 固件使用 Keil 打开 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`。`go.py` 是原厂 MicroPython 环境的硬件探查脚本，不属于 ESP-IDF 构建流程；运行前按脚本提示断开电机。
 

@@ -469,34 +469,31 @@ Launcher
 -   不为每个 App 创建独立 FreeRTOS Task。
 -   不允许业务 App 硬编码具体 GPIO。
 
-## 15. 后续演进方向
+## 15. 分阶段开发节点
 
-``` text
-v0.1
-系统骨架
-Launcher
-App Framework
-Hardware Test
-   ↓
-v0.2
-Settings
-Wi-Fi
-NVS
-   ↓
-v0.3
-PC Monitor 实际通信
-   ↓
-v0.4
-Games
-Audio
-   ↓
-v0.5
-SD Card
-Assets
-File System
-   ↓
-持续增加独立 Apps
-```
+后续严格按节点顺序开发、验证和提交。一个节点未达到验收结果时，不并入下一个节点；GD32 协议补全可以并行，但依赖 LED、电机的正式功能必须等待其完成。节点状态统一记录在根目录 `ROADMAP.md`。
+
+| 节点 | 版本 | 功能 | 主要交付与验收结果 |
+| --- | --- | --- | --- |
+| 0 | 前置 | 构建基线恢复 | 修复 ESP-IDF Python 环境；清空构建缓存后仍能执行 `idf.py build`。 |
+| 1 | v0.1 | App Framework | 实现 App 描述、Registry、Manager 和 `init/open/close` 生命周期；测试 App 可注册和打开。 |
+| 2 | v0.1 | Navigation | 实现当前 App 状态和统一返回机制；A 进入、B 返回且 LVGL 对象完整释放。 |
+| 3 | v0.1 | Launcher | 实现 160 × 128 两列首页、焦点移动和基础分页；开机默认进入 Launcher。 |
+| 4 | v0.1 | Hardware Test App | 将现有 15 页 Dashboard 接入 App Framework；全部原有测试可进入、操作和返回。 |
+| 5 | v0.1 | Games 占位 App | 提供可进入、可返回的 Games 页面，不创建独立 FreeRTOS Task。 |
+| 6 | v0.1 | PC Monitor UI | 提供 CPU、RAM、GPU、温度 UI 骨架；无数据时统一显示 `--`。 |
+| 7 | v0.1 | Tools App | 提供 System Info、About 和 Wi-Fi 状态入口，显示真实系统信息。 |
+| 8 | v0.1 | Settings UI | 建立 Wi-Fi、Display、Sound、System 菜单；未实现选项明确标记状态。 |
+| 9 | v0.2 | Settings Service 与 NVS | 实现默认值、设置读写和持久化；配置缺失或损坏时安全回退。 |
+| 10 | v0.2 | Wi-Fi Service | 实现扫描、连接、断线重连和状态查询；无网络不阻塞启动。 |
+| 11 | v0.3 | PC Monitor 通信 | 定义 PC 数据协议并接收真实指标，持续更新监控页面。 |
+| 12 | v0.4 | Audio Service | 统一蜂鸣器接口、音效开关和音量语义，App 不直接调用 LEDC。 |
+| 13 | v0.4 | 首个正式游戏 | 优先实现 Snake；支持暂停和退出，返回 Launcher 后完整释放资源。 |
+| 14 | v0.5 | Storage Service | 实现 MicroSD 探测、挂载、卸载和错误状态；失败不影响系统启动。 |
+| 15 | v0.5 | Assets 与文件系统 | 加载图标、字体、音乐和游戏资源；资源缺失时安全降级。 |
+| 16 | 硬件支线 | GD32 `0x40` 协议补全 | 实现 I2C 从机、LED 和双电机控制，并与 ESP32 当前命令格式完成实机联调。 |
+
+版本边界：v0.1 形成 Launcher、App Framework 和 Hardware Test；v0.2 完成持久化设置与 Wi-Fi；v0.3 打通 PC Monitor 数据；v0.4 加入 Audio 和首个游戏；v0.5 完成 SD、Assets 与文件系统。
 
 ------------------------------------------------------------------------
 
