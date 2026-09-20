@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点用左右键按注册顺序线性移动（页内行优先 0→1→2→3），越过本页第 4 格即翻页，两端夹紧不循环；上下键不参与导航。该导航模型于 2026-09-20 取代节点 3 决策 5 的“四向网格移动、上下跨页”。
+- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在右列按 `→` 翻到下一页**同一行**第一格、在左列按 `←` 翻回上一页**同一行**第二格（目标格不存在时保持焦点）；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
 - 分层：`main/framework/` 为 App Framework 运行时（节点 1～3），`main/apps/` 为业务 App（节点 5～8），`main/services/` 为 Service 层（节点 9 的首个 `Settings Service`，App 不直接访问 NVS），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，I2C `0x40` LED／电机从机协议未实现。
@@ -30,7 +30,7 @@
   | 9 Settings Service 与 NVS | `goals/20260920-1429-settings-service-nvs.md` |
 
 - 未验证项汇总（均已在各自 Goal 中判定为不阻塞收口）：LED、电机、MPU6050 的实机行为无证据（等节点 16 的 GD32 `0x40` 协议）；节点 9 的 `nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不改分区表的前提下构造，只按源码检查确认；节点 8 与节点 9 的末轮回归为人工口头确认，无补充串口日志。
-- Launcher 导航左右切换（2026-09-20，非设计文档第 15 节的有序节点）：源码、自测与文档已同步，**待人工验证**。施工文档为 `goals/20260920-2015-launcher-lr-paging.md`。
+- Launcher 导航改为网格 + 右键翻页（2026-09-20，非设计文档第 15 节的有序节点）：**已完成**。`←`／`→` 在行内换列，在右列按 `→` 翻到下一页同一行第一格、在左列按 `←` 翻回上一页同一行第二格，目标格不存在时保持焦点；`↑`／`↓` 在页内换行且不翻页。每页 4 格时从第 1 格按 `→` 两次即翻页。网格几何、每页容量、槽位的行优先对应关系、卡片布局与配色均未改。实机验证：自测固件输出 `LAUNCHER_SELF_TEST: PASS`（引导路径 13 步，八种数量边界与失败路径均通过），普通固件的四方向导航与五个 App、Hardware Test 15 页由人工确认符合要求（无补充串口日志）。本变更经两次模型修订（首版“左右线性 ±1 且删掉上下键”→ “外侧列翻页 + 上下换行” → 最终“翻页保持同一行”），施工文档为 `goals/20260920-2015-launcher-lr-paging.md`。
 - GD32 实机固件与 README 中 `0x40` 协议的对应关系待确认，不阻塞不依赖 LED、电机的 v0.1 框架开发。
 
 ## 有序开发节点
@@ -57,7 +57,7 @@
 
 ## 下一步
 
-1. **Launcher 左右切换待人工验证**：自测固件应输出 `LAUNCHER_SELF_TEST: PASS` 且引导路径为 16 步；普通固件按 `→` 从 Games 逐格走到 Hardware Test 并翻到第 2 页，`←` 反向回退，索引 0 按 `←` 与第 2 页末按 `→` 均无反应，`↑`／`↓` 不改变焦点；A／B 与五个 App、Hardware Test 15 页无回归。命令与预期结果见 `goals/20260920-2015-launcher-lr-paging.md`。
+1. **节点 10“Wi-Fi Service”尚未立项**，是下一个有序开发节点；它需要消费节点 9 的 `wifi_auto_connect`，并在落地后替换 Settings 的 `Wi-Fi` 页与 Tools 的 Wi-Fi 详情页文案。Launcher 网格导航改造已于 2026-09-20 完成并验证，不再是待办。
 2. **节点 10“Wi-Fi Service”尚未立项**，是下一个有序开发节点；它需要消费节点 9 的 `wifi_auto_connect`，并在落地后替换 Settings 的 `Wi-Fi` 页与 Tools 的 Wi-Fi 详情页文案。
 3. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
 4. 按需另立任务定位 SD／GPIO22 配置冲突（见下节“待确认与已知风险”）。

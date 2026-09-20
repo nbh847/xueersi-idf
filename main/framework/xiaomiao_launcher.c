@@ -46,10 +46,13 @@ typedef struct {
     lv_obj_t *name;
 } launcher_slot_t;
 
-/* The Launcher only navigates horizontally; there is no vertical move. */
+/* The Launcher is a 2 x 2 grid: left/right change the column, up/down
+ * change the row, and the page turns from the right column. */
 typedef enum {
     LAUNCHER_MOVE_LEFT = 0,
     LAUNCHER_MOVE_RIGHT,
+    LAUNCHER_MOVE_UP,
+    LAUNCHER_MOVE_DOWN,
 } launcher_move_t;
 
 static lv_obj_t *s_root;
@@ -139,12 +142,21 @@ static void launcher_render_page(void)
 }
 
 /*
- * Target index for one horizontal move. The Launcher reads the Registry
- * as a single left-to-right sequence: the four slots of a page are
- * visited in row-major order (0, 1, 2, 3) and stepping past the fourth
- * one turns the page. Both ends clamp instead of wrapping, so the focus
- * never leaves the valid range (launcher L/R paging goal, decisions 1
- * and 2).
+ * Target index for one direction key, on a 2 x 2 page grid.
+ *
+ * - Left and right move one column inside the current row.
+ * - The page turns from the outer column and keeps the row: right from
+ *   the right column lands on the same row of the next page, left from
+ *   the left column on the same row of the previous page. A turn only
+ *   happens when that cell exists, so the second row of the last page
+ *   has nothing to turn to when the page holds a single row.
+ * - Up and down move one row inside the current page, so the page is
+ *   never turned by a vertical key.
+ * - Every other out-of-range move keeps the focus instead of wrapping.
+ *
+ * With four entries per page this means the page turns after pressing
+ * right twice: once to reach the right column, once to leave the page
+ * (launcher grid paging goal, decisions 1 to 5).
  */
 static size_t launcher_next_index(launcher_move_t direction)
 {
@@ -155,11 +167,46 @@ static size_t launcher_next_index(launcher_move_t direction)
         return index;
     }
 
-    if (direction == LAUNCHER_MOVE_LEFT) {
-        return (index > 0) ? index - 1 : index;
+    const size_t slot = index % XIAOMIAO_LAUNCHER_PER_PAGE;
+    const size_t column = index % XIAOMIAO_LAUNCHER_COLUMNS;
+    const size_t row = slot / XIAOMIAO_LAUNCHER_COLUMNS;
+    const size_t page_base = index - slot;
+
+    switch (direction) {
+    case LAUNCHER_MOVE_LEFT:
+        if (column > 0) {
+            return index - 1;
+        }
+        /* Left column: the previous page, same row, right column. The
+         * previous page is always full, so that cell exists whenever
+         * this page does. */
+        return (index >= XIAOMIAO_LAUNCHER_PER_PAGE)
+                   ? index - XIAOMIAO_LAUNCHER_PER_PAGE + 1
+                   : index;
+
+    case LAUNCHER_MOVE_RIGHT:
+        if (column + 1 < XIAOMIAO_LAUNCHER_COLUMNS) {
+            return (index + 1 < count) ? index + 1 : index;
+        }
+        /* Right column: the next page, same row, left column. */
+        {
+            const size_t next = page_base + XIAOMIAO_LAUNCHER_PER_PAGE +
+                                row * XIAOMIAO_LAUNCHER_COLUMNS;
+            return (next < count) ? next : index;
+        }
+
+    case LAUNCHER_MOVE_UP:
+        return (row > 0) ? index - XIAOMIAO_LAUNCHER_COLUMNS : index;
+
+    case LAUNCHER_MOVE_DOWN:
+        if (row + 1 < XIAOMIAO_LAUNCHER_ROWS &&
+            index + XIAOMIAO_LAUNCHER_COLUMNS < count) {
+            return index + XIAOMIAO_LAUNCHER_COLUMNS;
+        }
+        return index;
     }
 
-    return (index + 1 < count) ? index + 1 : index;
+    return index;
 }
 
 static void launcher_move(launcher_move_t direction)
@@ -262,6 +309,12 @@ static void launcher_key_cb(lv_event_t *event)
     case LV_KEY_RIGHT:
         launcher_move(LAUNCHER_MOVE_RIGHT);
         break;
+    case LV_KEY_UP:
+        launcher_move(LAUNCHER_MOVE_UP);
+        break;
+    case LV_KEY_DOWN:
+        launcher_move(LAUNCHER_MOVE_DOWN);
+        break;
     case LV_KEY_ENTER:
         launcher_activate();
         break;
@@ -269,12 +322,6 @@ static void launcher_key_cb(lv_event_t *event)
         launcher_go_back();
         break;
     default:
-        /*
-         * Up and down are deliberately not navigation keys: the
-         * Launcher is a left/right pager, so a second way to change the
-         * page would give the same transition two entry points
-         * (launcher L/R paging goal, decision 3).
-         */
         break;
     }
 }

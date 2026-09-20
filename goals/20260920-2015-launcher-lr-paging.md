@@ -1,123 +1,134 @@
-# Launcher 导航改为左右切换
+# Launcher 导航改为网格 + 右键翻页
 
 ## 元信息
 
 - 对应节点：节点 3“Launcher”的导航行为变更（非设计文档第 15 节的有序节点）
-- 状态：已实现，待人工验证
+- 状态：已完成（2026-09-20；模型经两次修订，最终版自测固件输出 `LAUNCHER_SELF_TEST: PASS`，普通固件四方向导航由人工确认“符合要求”）
 - 创建时间：2026-09-20 20:15（北京时间）
-- 前置条件：节点 0～9 均已完成；节点 3 的 Launcher、节点 9 的 Settings Service 均已实机验证
-- 触发来源：用户提出“五个 App 改成左右切换，往下不再是切页”
-- 后续影响：本变更取代节点 3 决策 5 的“左右限本行、上下 ±2 跨页”规则。节点 3～9 的实机回归基线随之更新，需重新验证一轮 Launcher 相关行为
+- 前置条件：节点 0～9 均已完成并实机验证
+- 触发来源：用户提出“五个 App 改成左右切换，往最右边按才切到第二页，而不是往下切页”，随后明确“上下键也是有用的”
+- 后续影响：本变更取代节点 3 决策 5 的“左右限本行、上下 ±2 可跨页”规则；节点 3～9 的 Launcher 回归基线随之更新，需重新验证一轮
 
 ## 目标与预期行为
 
-把 Launcher 的焦点移动从“2 列 × 2 行网格的四向移动”改为“左右方向的线性翻页”。
+在保留 2 列 × 2 行网格的前提下，把翻页键从 `↓` 改到 `→`：上下负责页内换行，左右负责换列并在外侧列翻页。
 
-- `←` / `→` 是唯一的焦点移动键，按 Registry 注册顺序线性前进／后退一格。
-- 焦点从本页最后一格（索引 3）继续按 `→`，落到下一页第一格（索引 4），即翻页；反向按 `←` 从索引 4 回到索引 3。第 2 页只有 1 个 App 时，索引 4 按 `→` 保持不变。
-- 焦点在索引 0 按 `←`、在最后一个索引按 `→` 都保持不变，不循环。
-- `↑` / `↓` 不再是导航键，按下不改变焦点、页码或任何对象。
-- 页面布局不变：仍是 160 × 128 上 2 列 × 2 行共 4 格的固定网格，焦点顺序为行优先阅读顺序（索引 0 → 1 → 2 → 3）。翻页时整页重建，页内移动只重画受影响的两格。
+- 页面布局不变：160 × 128 上 2 列 × 2 行共 4 格的固定网格，格位与索引仍为行优先（槽 0／1 在第 1 行，槽 2／3 在第 2 行）。
+- `←` / `→` 在当前行内换列：索引 0 ↔ 1、索引 2 ↔ 3。
+- 在右列继续按 `→` 翻页，且**保持在同一条行**：从第 1 行右列翻到下一页第 1 行第一格，从第 2 行右列翻到下一页第 2 行第一格。目标格不存在时（例如下一页只有 1 行）保持焦点不变。
+- 在左列继续按 `←` 反向翻页，同样保持同一行：从第 1 行左列翻回上一页第 1 行第二格，从第 2 行左列翻回上一页第 2 行第二格。
+- `↑` / `↓` 在当前页内换行：索引 0 ↔ 2、索引 1 ↔ 3；上下键不会翻页。
+- 其余越出网格的移动（第 1 行按 `↑`、最后一行按 `↓`）保持焦点不变，不循环。
+- 每页 4 格时，从本页第 1 格起按 `→` 两次即翻页：第一次到右列，第二次离开本页。
 
-本变更只改按键到目标的映射，不改网格几何、App 注册顺序、A 打开／B 返回语义、生命周期、Navigation 边界或任何 App 内部行为。
+本变更只改按键到目标的映射，不改网格几何、每页容量、App 注册顺序、A 打开／B 返回语义、生命周期、Navigation 边界或任何 App 内部行为。
 
 ## 背景与文件入口
 
 - `main/framework/xiaomiao_launcher.c` 的 `launcher_next_index()` 是唯一的方向→目标索引映射，`launcher_key_cb()` 是唯一的按键分发点，`launcher_move()` 负责页面对比与局部重绘。
-- `main/framework/xiaomiao_launcher.h` 声明 `XIAOMIAO_LAUNCHER_COLUMNS/ROWS/PER_PAGE`，本变更不动这些常量：网格几何与每页容量不变。
-- `main/framework/xiaomiao_launcher_selftest.c` 的 `s_steps[]` 引导路径与 `check_counts_auto()`／`check_moves_auto()`／`check_open_back_auto()` 中的断言直接编码了旧的四向规则，必须同步。
-- `docs/xiaomiao_firmware_v0.1_design.md` 第 4 节的操作规则写的是 `↑ / ↓ / ← / →`：移动焦点。
-- `docs/project-overview.md` 与 `ROADMAP.md` 记录的“2 列 × 2 行、上下跨页、焦点索引”描述需要同步。
+- `main/framework/xiaomiao_launcher.h` 声明 `XIAOMIAO_LAUNCHER_COLUMNS/ROWS/PER_PAGE`，本变更不动这些常量。
+- `main/framework/xiaomiao_launcher_selftest.c` 的 `s_steps[]` 引导路径与 `check_counts_auto()`／`check_moves_auto()`／`check_open_back_auto()` 中的断言直接编码了旧的导航规则，必须同步。
+- `docs/xiaomiao_firmware_v0.1_design.md` 第 4 节的操作规则需要同步。
+- `docs/project-overview.md`、`ROADMAP.md` 与 `goals/ROADMAP-history.md` 的导航描述与状态需要同步。
 
 ## 范围边界
 
 ### 本节点必须完成
 
-- `launcher_next_index()` 改为左右两向的线性 ±1，越界夹紧不循环。
-- `launcher_key_cb()` 不再把 `↑` / `↓` 映射为焦点移动。
-- 更新 `xiaomiao_launcher.c` 与 `.h` 中描述旧规则的注释，使其与新行为一致。
-- 同步 `xiaomiao_launcher_selftest.c`：引导路径改为仅左右键；数量边界、自动断言与 App 打开态断言中依赖上下键的部分一并改写。
+- `launcher_next_index()` 改为网格映射：左右换列并在外侧列翻页，上下页内换行，越界夹紧不循环。
+- `launcher_key_cb()` 恢复对 `↑` / `↓` 的分发（它们仍是导航键）。
+- 更新 `xiaomiao_launcher.c` 与 `.h` 中描述规则的注释，使其与实现一致。
+- 同步 `xiaomiao_launcher_selftest.c`：引导路径覆盖四个方向与两侧翻页；数量边界改为按网格规则走到末索引；App 打开态断言保留左右键的被忽略验证。
 - 保留页内局部重绘优化、页边界整页重建、`create`／`destroy` 幂等、A 打开／B 返回与 App 打开态下方向键被忽略的既有行为。
-- 同步 `docs/xiaomiao_firmware_v0.1_design.md`、`docs/project-overview.md` 与 `ROADMAP.md` 中的导航描述与状态。
+- 同步 `docs/xiaomiao_firmware_v0.1_design.md`、`docs/project-overview.md`、`ROADMAP.md` 与 `goals/ROADMAP-history.md` 中的导航描述与状态。
 - 提供人工验证命令与验收标准。
 
 ### 本节点禁止修改或实现
 
-- 不改 `XIAOMIAO_LAUNCHER_COLUMNS/ROWS/PER_PAGE`，不改卡片几何、配色或字体。
+- 不改 `XIAOMIAO_LAUNCHER_COLUMNS/ROWS/PER_PAGE`，不改卡片几何、配色或字体，不改每页 4 格的容量。
+- 不改槽位与索引的行优先对应关系（不改成纵向填充）。
 - 不改 App Registry、App Manager、Navigation 或任何 App 的源码。
 - 不改 A 打开、B 返回、Hardware Test 长按 B 或 Settings／Tools 两级 B 的语义。
-- 不新增按键（例如用 A／B 翻页）、不新增动画、不新增滚动、不引入循环导航。
+- 不新增按键、不新增动画、不新增滚动、不引入循环导航。
 - 不改引脚、硬件协议、GD32 工程、分区表、依赖版本或 `dependencies.lock`。
 
 ## 实现决策
 
-1. **导航模型**：Launcher 视为按注册顺序排列的单一线性序列，每页 4 格。`←`／`→` 是 ±1，跨过页边界即翻页。这比“保留网格四向移动、只把翻页从下键挪到右键”更简单，也符合用户“全部都换成左右”的要求；代价是索引 1 按 `→` 会到索引 2（下一行左格），视觉上按行优先阅读顺序前进。
-2. **两端夹紧而非循环**：索引 0 按 `←`、末索引按 `→` 保持不变。与节点 3 决策 5 的“越界保持焦点”一致，避免用户长按方向键后在列表两端来回跳。
-3. **上下键改为无操作**，而不是复用为左右或第二套翻页入口。用户明确要求“全部的切换方向都要换成左右”；保留第二套入口会让翻页有两个来源，也会让自测与文档出现两套并行规则。
-4. **`launcher_move_t` 只保留 `LAUNCHER_MOVE_LEFT`／`LAUNCHER_MOVE_RIGHT`** 两个枚举值，删除 `_UP`／`_DOWN`。保留枚举（而非改成裸 `int`）是为了让 `launcher_key_cb()` 的分发意图仍然自解释。
-5. **不改 `launcher_move()`／`launcher_render_page()`**：页边界对比与局部重绘逻辑与按键方向无关，新映射自然复用；页边界整页重建这一优化不因本次变更失效。
-6. **不新增按键提示**：页脚现有提示为 `A open`，未提到方向键，因此本次不需要改文案，也不为了说明“现在只能左右”而新增提示。
-7. **自测的引导路径改为 16 步**：`←`（起点保持）→ `↓`／`↑`（验证被忽略）→ 连续 `→` 到末格（含一次翻页与末端保持）→ 连续 `←` 回到索引 0。路径结束时必须回到焦点 0、页码 0，复用既有的 `traversal ends at index 0`／`page 0` 断言，不改自测的控制流。
-8. **保留“App 打开态忽略方向键”的测试强度**：原断言用的是 `↓`，而现在 `↓` 在任何情况下都不动，断言失去区分度，因此改按 `→`——若 App 打开态的守卫失效，焦点会从 0 移到 1，断言即可捕获。
+1. **保留 2 列 × 2 行网格与行优先槽位**：`←` / `→` 换列，`↑` / `↓` 换行，格位与索引的对应关系不变，因此卡片几何、分页容量与既有布局证据都不受影响。
+2. **翻页键改为 `→`，条件是在右列，目标是下一页同一行第一格**：这直接满足“往最右边按才切页、不是往下切页”，并满足“上排翻页到第二页上排、下排翻页到第二页下排第一个”。目标格不存在时保持焦点，因此 5 个 App 时下排按 `→` 不会跳到第 2 页（第 2 页只有 1 行）。代价是页内第 2 行的入口（如 Tools、Settings）不在 `→` 的路径上，需要用 `↓` 到达——这正是用户要求保留上下键的原因。
+3. **`←` 取对称规则**：从第 p 页第 r 行左列翻回第 p-1 页第 r 行第二格。上一页只要存在就是满页，因此该格必然存在，不需要额外的存在性判断。
+4. **上下键不翻页**：`↓` 只在同一页内向下换行，`↑` 只在同一页内向上换行。若允许上下跨页，翻页就会有两个入口，与决策 2 冲突。
+5. **两端夹紧而非循环**：与节点 3 决策 5 的“越界保持焦点”一致，避免长按方向键后在首尾来回跳。
+6. **`launcher_move_t` 保留四个方向**，`launcher_next_index()` 用 `XIAOMIAO_LAUNCHER_COLUMNS/ROWS` 计算列、行与页基址，不写死 2。
+7. **不改 `launcher_move()`／`launcher_render_page()`**：页边界对比与局部重绘逻辑与按键方向无关，新映射自然复用。
+8. **自测引导路径改为 13 步**：测试主流程注册 7 个 App（第 0 页 4 个、第 1 页 3 个，两页都有两行），路径覆盖首行与首列的夹紧、行内左右换列、两行各自的翻页与反向翻页、上下换行与上下夹紧，结束时回到焦点 0、页码 0，复用既有 `traversal ends at index 0`／`page 0` 断言。
+9. **数量边界的“走到末索引”改为按网格规则显式构造路径**：每页两次 `→` 翻页，最后按末槽位（0／1／2／3）补 0／1／2／2 步，八种注册数量都能在不依赖“线性 ±1”的前提下到达末索引，并逐次断言焦点不越界、页码与焦点一致。
+10. **保留“App 打开态忽略方向键”的测试强度**：仍用 `→`，因为从索引 0 按 `→` 在守卫失效时会移到索引 1。
 
 ## 执行检查点
 
 ### 检查点 1：导航映射
 
-- `launcher_next_index()` 只区分左右两向，越界返回原索引。
-- `launcher_key_cb()` 中不存在把 `↑`／`↓` 交给 `launcher_move()` 的分支。
+- `launcher_next_index()` 的左右分支只依赖列与页基址，上下分支只依赖行并且不改变页码。
+- `launcher_key_cb()` 四个方向键都有对应分支。
 - `XIAOMIAO_LAUNCHER_COLUMNS/ROWS/PER_PAGE`、卡片几何与配色未改。
 
-预期结果：静态检查即可确认映射规则单一、无残留四向逻辑。
+预期结果：静态检查即可确认四条规则与决策 1～5 一一对应，且上下键不可能翻页。
 
 ### 检查点 2：自测路径与数量边界
 
-- `s_steps[]` 只含 `←`／`→`／`↑`／`↓` 中的左右移动与上下忽略步骤，路径结束回到焦点 0、页码 0。
-- `check_counts_auto()` 用 `→` 前进到末索引，并覆盖 0／1／2／3／4／5／7／16 八种注册数量下的“末索引可达且不越界”。
+- `s_steps[]` 覆盖四个方向、两侧翻页与四处夹紧，路径结束回到焦点 0、页码 0。
+- `check_counts_auto()` 在 0／1／2／3／4／5／7／16 八种注册数量下都能到达末索引，并逐次验证焦点不越界、页码与焦点一致。
 - 自测仍在数量边界、App 打开态、open／back 两轮等原有分组上跑完，`LAUNCHER_SELF_TEST: PASS` 标记不变。
 
 预期结果：自测断言与新映射一一对应，不存在仍按旧规则断言的步骤。
 
 ### 检查点 3：实机行为
 
-- 自测固件输出 `LAUNCHER_SELF_TEST: PASS`，引导路径步数与原“15 步”不同属预期。
-- 普通固件按 `→` 从第 1 格逐格走到第 4 格后进入第 2 页的第 5 个 App；按 `←` 反向回到第 1 页。
-- 在索引 0 按 `←`、在第 2 页末尾按 `→` 均无反应。
-- 按 `↑`／`↓` 焦点不动。
+- 自测固件输出 `LAUNCHER_SELF_TEST: PASS`，引导路径为 13 步。
+- 普通固件从 Games 按 `→` 到 PC Monitor，再按 `→` 翻到第 2 页第 1 行的 Hardware Test，页码由 `1/2` 变为 `2/2`；按 `←` 翻回第 1 页第 1 行的 PC Monitor。
+- 从 Tools 按 `→` 到 Settings；在此按 `↓` 无效（已是最后一行）；按 `←` 从第 2 页第 2 行反向翻回第 1 页第 2 行的 Settings（需要第 2 页存在第 2 行）。
+- 5 个 App 时第 2 页只有 1 行，因此从第 1 页第 2 行右列（Settings）按 `→` **不应**跳到第 2 页，焦点保持。
+- 按 `↓` 从 Games 到 Tools、从 PC Monitor 到 Settings；`↓` 在最后一行无效、`↑` 在第一行无效，两者都不改变页码。
 - A 打开焦点 App、B 返回后焦点与页码保持；五个 App 与 Hardware Test 15 页无回归。
 
-预期结果：左右切换连续可达全部 5 个入口，上下键不再切页，既有打开／返回与生命周期行为不变。
+预期结果：四个方向键都有明确作用，翻页只由左右键在最外侧列触发且保持同一行，既有打开／返回与生命周期行为不变。
 
 ### 检查点 4：文档交付
 
-- 设计文档第 4 节的按键规则改为左右移动焦点、上下不参与导航。
-- `docs/project-overview.md` 与 `ROADMAP.md` 的 Launcher 描述与新行为一致。
-- 明确记录未验证范围：自测固件与普通固件的实机验证均未执行。
+- 设计文档第 4 节的按键规则改为左右换列并在外侧列翻页、上下页内换行。
+- `docs/project-overview.md`、`ROADMAP.md` 与 `goals/ROADMAP-history.md` 的描述与新行为一致。
+- 明确记录未验证范围：普通固件的实机验证尚未执行。
 
-预期结果：文档不残留“上下跨页”的描述，也没有把未执行的验证写成通过。
+预期结果：文档不残留“上下跨页”或“上下键不参与导航”的描述，也没有把未执行的验证写成通过。
 
 ## 失败路径与处理要求
 
-- 注册表为空：`←`／`→`／`↑`／`↓` 全部无操作，焦点与页码保持 0，不创建 Navigation 根对象。
+- 注册表为空：四个方向键全部无操作，焦点与页码保持 0，不创建 Navigation 根对象。
+- 单页注册（1～4 个 App）：`→` 在右列因没有下一页而保持焦点；`↓` 在最后一行保持焦点。
 - 焦点索引越界（不应发生）：`launcher_move()` 保持原索引并返回，不重建页面。
 - 翻页失败（页面对比异常）：不作为预期路径；若出现，必须表现为焦点不变而非删除对象。
 - 自测任一断言失败：输出 `LAUNCHER_SELF_TEST: FAIL ...` 并 abort，不得跳过。
 
 ## 验收标准
 
-> 复选框在实机验证完成前一律保持未勾选。
+> 勾选依据见“验证结果”。自测固件有串口日志；普通固件的四方向导航为人工确认，未提供补充串口日志。
 
-- [ ] `←`／`→` 是 Launcher 中唯一的焦点移动键，按注册顺序线性 ±1。
-- [ ] 索引 3 按 `→` 进入第 2 页的索引 4；索引 4 按 `←` 回到索引 3。
-- [ ] 索引 0 按 `←`、末索引按 `→` 均保持不变，不循环。
-- [ ] `↑`／`↓` 不改变焦点、页码或对象数量。
-- [ ] 网格几何、每页容量、卡片布局与配色未改。
-- [ ] 页内移动只重画受影响的两格，翻页整页重建的既有优化保留。
-- [ ] A 打开、B 返回、App 打开态忽略方向键、create／destroy 幂等均无回归。
-- [ ] 自测固件输出 `LAUNCHER_SELF_TEST: PASS`，且引导路径与断言已按新规则改写。
-- [ ] 普通固件五个 App 与 Hardware Test 15 页无回归。
-- [ ] 设计文档、`docs/project-overview.md` 与 `ROADMAP.md` 已同步真实状态。
-- [ ] 人工使用 ESP-IDF 6.1 完成自测构建与普通构建的编译、烧录与实机验证。
+- [x] `←` / `→` 在行内换列：索引 0 ↔ 1、索引 2 ↔ 3。（自测第 3、12 步；人工确认）
+- [x] 在右列按 `→` 翻到下一页**同一行**的第一格；目标格不存在时保持焦点。（自测第 4、8 步覆盖两行翻页；5 个 App 下排不翻页为人工确认）
+- [x] 在左列按 `←` 翻回上一页**同一行**的第二格；第 1 页第 1 行左列按 `←` 保持焦点。（自测第 1、5、9 步）
+- [x] 从第 1 行翻页落在下一页第 1 行，从第 2 行翻页落在下一页第 2 行。（自测第 4 步 → 索引 4 第 1 行、第 8 步 → 索引 6 第 2 行）
+- [x] `↑` / `↓` 在页内换行（0 ↔ 2、1 ↔ 3），在任何情况下都不改变页码。（自测第 6、7、10、11 步；代码层面上下分支不含页基址与 `PER_PAGE`）
+- [x] 第 1 行按 `↑`、最后一行按 `↓` 保持焦点不变。（自测第 2、7、11 步）
+- [x] 每页 4 格时按 `→` 两次即翻页。（自测引导路径第 3→4 步即两次 `→`；人工确认）
+- [x] 5 个 App 时从第 1 页第 2 行右列按 `→` 保持焦点（第 2 页没有第 2 行）。（人工确认）
+- [x] 网格几何、每页容量、槽位与索引的行优先对应关系、卡片布局与配色未改。（静态检查：`COLUMNS/ROWS/PER_PAGE` 与卡片几何常量未动）
+- [x] 页内移动只重画受影响的两格，翻页整页重建的既有优化保留。（`launcher_move()`／`launcher_render_page()` 未改）
+- [x] A 打开、B 返回、App 打开态忽略方向键、create／destroy 幂等均无回归。（自测：`open 'self.app0' failed: ESP_ERR_INVALID_STATE`、两处 `destroy refused: an App is open`、3 轮 A／B）
+- [x] 自测固件输出 `LAUNCHER_SELF_TEST: PASS`，且引导路径与断言已按本次规则改写。（`guided key path: 13 steps + 3 rounds` + `LAUNCHER_SELF_TEST: PASS`）
+- [x] 普通固件五个 App 与 Hardware Test 15 页无回归。（人工确认）
+- [x] 设计文档、`docs/project-overview.md`、`ROADMAP.md` 与 `goals/ROADMAP-history.md` 已同步真实状态。
+- [x] 人工使用 ESP-IDF 6.1 完成自测构建与普通构建的编译、烧录与实机验证。（自测固件有完整串口日志；普通固件为人工确认，无补充串口日志）
 
 ## 人工验证命令与预期结果
 
@@ -126,14 +137,14 @@ Agent 只执行源码、配置与 diff 静态检查，不主动运行以下命�
 ### 自测固件（Launcher 导航规则）
 
 ```bash
-idf.py -B .tmp/build-launcher-selftest/build -D SDKCONFIG=$(pwd)/.tmp/build-launcher-selftest/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" -D XIAOMIAO_LAUNCHER_SELF_TEST=ON -D XIAOMIAO_FRAMEWORK_SELF_TEST=OFF -D XIAOMIAO_NAVIGATION_SELF_TEST=OFF -D XIAOMIAO_SETTINGS_SERVICE_SELF_TEST=OFF set-target esp32
-idf.py -B .tmp/build-launcher-selftest/build -D SDKCONFIG=$(pwd)/.tmp/build-launcher-selftest/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" -D XIAOMIAO_LAUNCHER_SELF_TEST=ON build
-idf.py -B .tmp/build-launcher-selftest/build -p COM5 flash monitor
+idf.py -B .tmp/build-launcher-lr/build -D SDKCONFIG=D:/WorkSpace/hardware/esp32-lab/xueersi-idf/.tmp/build-launcher-lr/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci" -D XIAOMIAO_LAUNCHER_SELF_TEST=ON -D XIAOMIAO_FRAMEWORK_SELF_TEST=OFF -D XIAOMIAO_NAVIGATION_SELF_TEST=OFF -D XIAOMIAO_SETTINGS_SERVICE_SELF_TEST=OFF set-target esp32
+idf.py -B .tmp/build-launcher-lr/build -D SDKCONFIG=D:/WorkSpace/hardware/esp32-lab/xueersi-idf/.tmp/build-launcher-lr/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci" -D XIAOMIAO_LAUNCHER_SELF_TEST=ON build
+idf.py -B .tmp/build-launcher-lr/build -p COM5 flash monitor
 ```
 
 预期：
 
-- 自动断言部分先输出 `automatic checks passed`，其中引导路径步数为新的步数（非 15）。
+- 自动断言先输出 `automatic checks passed, guided key path: 13 steps + 3 rounds`（步数为 13）。
 - 屏幕按提示按完引导路径后输出 `guided traversal done`，随后 3 轮 A 打开／B 返回输出 `round 1/3 done` → `round 2/3 done` → `round 3/3 done`。
 - 最终唯一标记 `LAUNCHER_SELF_TEST: PASS`。
 
@@ -147,9 +158,11 @@ idf.py -p COM5 flash monitor
 预期：
 
 - 启动链输出 `launcher created (5 apps)` 与 `Launcher ready, 5 app(s) registered`。
-- 按 `→` 依次经过 Games → PC Monitor → Tools → Settings，再按一次 `→` 跳到第 2 页的 Hardware Test，页码由 `1/2` 变为 `2/2`。
-- 按 `←` 逐格回退，越过第 1 格边界与第 2 页边界时焦点保持。
-- 按 `↑`／`↓` 焦点不动。
+- 从 Games 按 `→` 到 PC Monitor，再按 `→` 翻到第 2 页选中 Hardware Test，页码由 `1/2` 变 `2/2`。
+- 按 `←` 从 Hardware Test 翻回第 1 页第 1 行并选中 PC Monitor。
+- 按 `↓` 从 Games 到 Tools、从 PC Monitor 到 Settings，页码保持 `1/2`。
+- 从 Tools 按 `→` 到 Settings，再按 `→` **不应**翻页（第 2 页没有第 2 行），焦点保持。
+- 在第 1 页第 1 行按 `↑`、在任意页最后一行按 `↓` 均无反应。
 - A 进入焦点 App、B 返回后焦点与页码保持；Hardware Test 15 页可达。
 
 ## 静态检查要求
@@ -157,45 +170,44 @@ idf.py -p COM5 flash monitor
 实现后至少检查：
 
 ```bash
-rg -n "LAUNCHER_MOVE_UP|LAUNCHER_MOVE_DOWN|LV_KEY_UP|LV_KEY_DOWN" main/framework/xiaomiao_launcher.c main/framework/xiaomiao_launcher.h
-rg -n "launcher_next_index|LAUNCHER_MOVE_LEFT|LAUNCHER_MOVE_RIGHT" main/framework/xiaomiao_launcher.c
-rg -n "LV_KEY_UP|LV_KEY_DOWN" main/framework/xiaomiao_launcher_selftest.c
+rg -n "LAUNCHER_MOVE_UP|LAUNCHER_MOVE_DOWN|LAUNCHER_MOVE_LEFT|LAUNCHER_MOVE_RIGHT" main/framework/xiaomiao_launcher.c main/framework/xiaomiao_launcher.h
+rg -n "launcher_next_index" -A 45 main/framework/xiaomiao_launcher.c
+rg -n "LV_KEY_UP|LV_KEY_DOWN|LV_KEY_LEFT|LV_KEY_RIGHT" main/framework/xiaomiao_launcher.c main/framework/xiaomiao_launcher_selftest.c
 ```
 
-预期：`launcher.c`／`.h` 内不再出现 `LAUNCHER_MOVE_UP`／`LAUNCHER_MOVE_DOWN`，且 `LV_KEY_UP`／`LV_KEY_DOWN` 只出现在按键分发的显式忽略位置（若保留）或完全不出现；自测中保留的上／下按键步骤只用于断言“焦点不变”。
+预期：四个方向都有独立分支；**左右分支的翻页目标只由页基址 + `PER_PAGE` + 行号 × `COLUMNS` 组成**，上下分支只使用行号与 `COLUMNS/ROWS`、不含页基址或 `PER_PAGE` 运算（即上下键在代码层面不可能改变页码）。
 
-## 实现记录（2026-09-20）
+## 验证结果
 
-### 修改文件
+### 最终模型的自测固件（2026-09-20，人工执行、Agent 复核）-- 通过
 
-- `main/framework/xiaomiao_launcher.c`
-  - `launcher_move_t` 只保留 `LAUNCHER_MOVE_LEFT`／`LAUNCHER_MOVE_RIGHT`，删除 `_UP`／`_DOWN`。
-  - `launcher_next_index()` 重写为线性 ±1：`←` 在索引 0 夹紧，`→` 在末索引夹紧，其余为 ±1；删除列号计算与四向 `switch`。
-  - `launcher_key_cb()` 删除 `LV_KEY_UP`／`LV_KEY_DOWN` 两个 case，在 `default` 处加注释说明上下键不是导航键。
-  - `launcher_move()`、`launcher_render_page()`、`launcher_slot_*`、卡片几何与配色全部未改，页边界整页重建与页内局部重绘逻辑原样复用。
-- `main/framework/xiaomiao_launcher.h`：头部契约注释新增“Navigation model”一节，说明左右线性、行优先顺序、两端夹紧与上下键不参与导航。
-- `main/framework/xiaomiao_launcher_selftest.c`
-  - `s_steps[]` 由 15 步四向表改为 16 步左右表：`←` 起点夹紧 → `↓`／`↑` 被忽略 → 连续 `→` 到索引 6（含索引 3→4 翻页与索引 6 夹紧）→ 连续 `←` 回到索引 0。
-  - `check_moves_auto()`：边界断言改为“left at the start stays”“up is ignored”“down is ignored”。
-  - `check_counts_auto()`：改用 `→` 从索引 0 走到末索引（`for i = 1; i < n`），补“right at the end stays”“vertical keys are ignored”，`n > 1` 时补左右往返一格，避免 `n == 1` 时断言不成立。
-  - `check_open_back_auto()`：App 打开态的方向键断言由 `↓` 改为 `→`（决策 8）。
-  - 引导路径的控制流、`XM_STEP_COUNT` 计数、PASS 标记与 3 轮 A／B 往返均未改。
-- `docs/xiaomiao_firmware_v0.1_design.md` 第 4 节：按键规则由 `↑ / ↓ / ← / →` 移动焦点改为左右移动焦点并按 4 格翻页、上下不参与导航。
-- `docs/project-overview.md`：启动链的 Launcher 行与“目标架构与演进约束”的 Launcher 描述补充左右移动焦点与翻页。
-- `ROADMAP.md`：当前状态补导航模型、当前开发节点补本变更条目、下一步补待验证项；逐条实现记录写入 `goals/ROADMAP-history.md` 的施工记录。
+人工用 `XIAOMIAO_LAUNCHER_SELF_TEST=ON` 在 `.tmp/build-launcher-lr/` 重新编译烧录后取得串口日志：
 
-### 静态检查结果（Agent 执行，未编译）
+- `automatic checks passed, guided key path: 13 steps + 3 rounds` —— 步数为 **13**，与最终模型的 `s_steps[]` 一致，说明自测跑的是“保持同一行翻页”的路径。
+- `guided traversal done`：实机按完 13 步，覆盖首行与首列夹紧、行内两向换列、第 1 行与第 2 行各自的 `→` 翻页与 `←` 反向翻页、上下换行与上下夹紧；焦点回到索引 0／页码 0，满足 `traversal ends at index 0`／`page 0` 断言。
+- 八种数量边界（0／1／2／3／4／5／7／16）与失败路径（`open 'self.app0' failed: ESP_ERR_INVALID_STATE`、两处 `destroy refused: an App is open`）全部通过。
+- 3 轮 A 打开／B 返回输出 `round 1/3 done` → `round 2/3 done` → `round 3/3 done`，最终唯一标记 `LAUNCHER_SELF_TEST: PASS`。
+- 无 panic、无看门狗、无重启循环、无输入失效。
 
-- `main/framework/xiaomiao_launcher.c` 与 `.h` 内不再出现 `LAUNCHER_MOVE_UP`／`LAUNCHER_MOVE_DOWN`／`LV_KEY_UP`／`LV_KEY_DOWN`（检索命中数为 0）。
-- 花括号配平：`xiaomiao_launcher.c` 49/49、`xiaomiao_launcher.h` 1/1、`xiaomiao_launcher_selftest.c` 60/60。
-- 三个文件无行尾空白、无 Tab、无非 ASCII 字符。
-- 改动范围核对：`git status` 确认只修改 `main/framework/xiaomiao_launcher.c`、`.h`、`xiaomiao_launcher_selftest.c` 与四个文档；未修改 `main/apps/`、`main/services/`、`main/main.c`、`main/CMakeLists.txt`、Navigation、App Registry／Manager、GD32、硬件协议、引脚、`sdkconfig.*` 或 `dependencies.lock`。
-- 自测步骤表与主流程注册数量核对：`XM_MAIN_APP_COUNT = 7`，步骤表最大目标索引 6、最大页码 1，均在范围内；路径末步回到索引 0／页码 0，与既有 `traversal ends at index 0`／`page 0` 断言一致。
-- 数量边界逐项核对：`n` 取 0／1／2／3／4／5／7／16 时，`→` 连按 `n-1` 次均落在索引 `n-1`，页码为 `(n-1)/4`；`n == 1` 时跳过左右往返分支，避免 `n-2` 下溢。
-- 按 `AGENTS.md` 的分工，未执行 `idf.py`、`set-target`、烧录、Monitor 或任何目标板操作。
+### 普通固件（2026-09-20，人工确认）-- 通过
+
+人工在目标板上确认四个方向的导航行为符合要求，包含：右列按 `→` 翻页并落在下一页同一行、按 `←` 沿同一行翻回、`↓` 在页内换行且不改变页码、5 个 App 时第 1 页第 2 行按 `→` 不翻页，以及五个 App 与 Hardware Test 15 页无回归。
+
+**证据边界**：本次只有人工口头确认（“测完了，符合要求”），未提供普通固件的补充串口日志，因此不补造 `open`／`closed` 时间戳、`screen children` 数值或焦点索引。
+
+### 已作废的早期结论
+
+首版“左右线性 ±1”模型（引导路径 16 步）曾于同日通过自测，其日志见 `goals/ROADMAP-history.md`。该结论随模型修订失效，不作为当前实现的证据。
 
 ## 当前交付与未验证范围
 
-- 已完成：范围、导航模型、边界与失败路径决策、检查点与验收标准；Launcher 源码与自测同步；四个文档同步；上述静态检查。
-- 尚未验证：Launcher 自测固件的编译与实机按键路径（`LAUNCHER_SELF_TEST: PASS`）、普通固件的左右切换实机行为、两端夹紧与上下键无反应的实机确认、A／B 语义与五个 App、Hardware Test 15 页回归。编译、烧录与串口监视按项目分工由人工执行。
-- 节点状态：已实现，待人工验证；不得因源码完成而视为已通过。
+- 已完成：范围、导航模型、边界与失败路径决策、检查点与验收标准；Launcher 源码与自测已按最终模型改写；设计文档、`docs/project-overview.md`、`ROADMAP.md` 与 `goals/ROADMAP-history.md` 已同步；静态检查；自测固件的编译、烧录与 13 步实机按键路径；普通固件四方向导航的人工确认。
+- 证据边界：自测固件有完整串口日志；普通固件为人工口头确认，无补充串口日志。
+- 节点状态：已完成，功能验收无待办。
+
+## 修订记录
+
+- 2026-09-20（首版）：按“全部切换方向都换成左右”实现为**左右线性 ±1**——`←`／`→` 沿注册顺序逐格前进后退，越过本页第 4 格翻页，`↑`／`↓` 不再参与导航。自测引导路径 16 步，并通过实机验证（提交 `21b53eb`）。
+- 2026-09-20（修订一）：用户反馈“不是依次选中每个 App，而是一排两个 App、按两次右就翻页”以及“上下键也是有用的”。首版把 4 格当作线性序列并删掉上下键，与网格语义不符。改为恢复上下键为页内换行、左右键为行内换列、翻页条件为“在右列按 `→`”，引导路径改为 17 步。
+- 2026-09-20（修订二，最终）：用户补充“上排翻页应到第二页上排，下排翻页应到第二页下排的第一个”。修订一的翻页目标固定为下一页第一格，丢失了行信息。最终规则改为**翻页保持同一行**：右列按 `→` 落到下一页同一行第一格，左列按 `←` 落到上一页同一行第二格，目标格不存在时保持焦点。引导路径改为 13 步（7 个 App，两页都有两行，两行各自的翻页都能覆盖）。
+- 验证状态：首版与修订一的自测结论均已作废；**最终模型（翻页保持同一行）已通过自测固件（13 步）并取得普通固件的人工确认**，验收标准全部勾选，详见“验证结果”。

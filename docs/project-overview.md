@@ -16,7 +16,7 @@ app_main
   -> lvgl FreeRTOS 任务
   -> Registry 按 Games、PC Monitor、Tools、Settings、Hardware Test 顺序注册
   -> App Manager init_all
-  -> Launcher（左右键按注册顺序移动焦点，越过本页第 4 格即翻页；按 A 打开焦点 App，Games／PC Monitor 短按 B 返回、Tools／Settings 两级 B、Hardware Test 长按 B 800 ms 返回）
+  -> Launcher（左右键在行内换列并在外侧列按同一行翻页，上下键在页内换行；按 A 打开焦点 App，Games／PC Monitor 短按 B 返回、Tools／Settings 两级 B、Hardware Test 长按 B 800 ms 返回）
 ```
 
 Dashboard 页面依次覆盖光照、热敏、MPU6050、两路 LED、蜂鸣器、两路电机、MicroSD、GPIO25/26 PWM、GPIO32/33 ADC、系统状态和 About。左右键切页，上下键调节当前值，A 执行动作，B 短按停止或取消、长按 800 ms 返回 Launcher。硬件状态集中在 `board_state_t`，UI 引用集中在 `ui_state_t`。
@@ -55,7 +55,7 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 ## 目标架构与演进约束
 
-`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation（统一打开／返回、App 内容根对象所有权）与 Launcher（2 列 × 2 行动态入口、左右键按注册顺序移动焦点并翻页、经 Navigation 进入／返回）；`main/apps/` 存放业务 App，当前有占位 `Games`、静态骨架 `PC Monitor`、菜单 `Tools` 与菜单 `Settings`；`main/services/` 已建立 Service 层并实现首个 System Service `Settings Service`（配置模型、NVS schema v1、安全回退与状态查询，App 不直接访问 NVS），后续 Wi-Fi、Audio、Storage 等 Service 按设计文档第 7、15 节依次补入；普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App、把 `Games`、`PC Monitor`、`Tools` 与 `Settings` 排在它之前，并默认启动 Launcher（五个入口，第 2 页只有一个）。BSP 分层仍未实现，Settings 的 Wi-Fi／Sound 偏好要等节点 10、12 消费后才会产生业务效果。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C，也不直接依赖 Launcher。
+`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation（统一打开／返回、App 内容根对象所有权）与 Launcher（2 列 × 2 行动态入口、左右键换列并在外侧列按同一行翻页、上下键页内换行、经 Navigation 进入／返回）；`main/apps/` 存放业务 App，当前有占位 `Games`、静态骨架 `PC Monitor`、菜单 `Tools` 与菜单 `Settings`；`main/services/` 已建立 Service 层并实现首个 System Service `Settings Service`（配置模型、NVS schema v1、安全回退与状态查询，App 不直接访问 NVS），后续 Wi-Fi、Audio、Storage 等 Service 按设计文档第 7、15 节依次补入；普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App、把 `Games`、`PC Monitor`、`Tools` 与 `Settings` 排在它之前，并默认启动 Launcher（五个入口，第 2 页只有一个）。BSP 分层仍未实现，Settings 的 Wi-Fi／Sound 偏好要等节点 10、12 消费后才会产生业务效果。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C，也不直接依赖 Launcher。
 
 ## 验证入口与已知缺口
 
