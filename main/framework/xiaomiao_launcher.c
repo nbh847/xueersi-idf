@@ -145,18 +145,20 @@ static void launcher_render_page(void)
  * Target index for one direction key, on a 2 x 2 page grid.
  *
  * - Left and right move one column inside the current row.
- * - The page turns from the outer column and keeps the row: right from
- *   the right column lands on the same row of the next page, left from
- *   the left column on the same row of the previous page. A turn only
- *   happens when that cell exists, so the second row of the last page
- *   has nothing to turn to when the page holds a single row.
+ * - The page turns from the outer column and prefers the same row: left
+ *   from the left column lands on the same row of the previous page,
+ *   right from the right column on the same row of the next page. When
+ *   the target page has no such row, the turn falls back to its first
+ *   cell, so the second row can still leave a page that the next one
+ *   only fills half. A turn only fails when the target page holds
+ *   nothing at all.
  * - Up and down move one row inside the current page, so the page is
  *   never turned by a vertical key.
  * - Every other out-of-range move keeps the focus instead of wrapping.
  *
  * With four entries per page this means the page turns after pressing
  * right twice: once to reach the right column, once to leave the page
- * (launcher grid paging goal, decisions 1 to 5).
+ * (launcher grid paging goal, decisions 1 to 6).
  */
 static size_t launcher_next_index(launcher_move_t direction)
 {
@@ -188,11 +190,16 @@ static size_t launcher_next_index(launcher_move_t direction)
         if (column + 1 < XIAOMIAO_LAUNCHER_COLUMNS) {
             return (index + 1 < count) ? index + 1 : index;
         }
-        /* Right column: the next page, same row, left column. */
+        /* Right column: the next page, same row, left column, falling
+         * back to that page's first cell. */
         {
-            const size_t next = page_base + XIAOMIAO_LAUNCHER_PER_PAGE +
-                                row * XIAOMIAO_LAUNCHER_COLUMNS;
-            return (next < count) ? next : index;
+            const size_t next_page = page_base + XIAOMIAO_LAUNCHER_PER_PAGE;
+            if (next_page >= count) {
+                return index;
+            }
+
+            const size_t same_row = next_page + row * XIAOMIAO_LAUNCHER_COLUMNS;
+            return (same_row < count) ? same_row : next_page;
         }
 
     case LAUNCHER_MOVE_UP:

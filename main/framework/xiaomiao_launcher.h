@@ -6,13 +6,14 @@
  * keys, opens the focused App with A through Navigation and keeps its
  * page and focus when the App returns.
  *
- * Navigation model (launcher grid paging goal, decisions 1 to 5):
+ * Navigation model (launcher grid paging goal, decisions 1 to 6):
  * - `<-` / `->` change the column inside the current row. The page
- *   turns from the outer column and keeps the row: `->` from the right
- *   column lands on the same row of the next page, `<-` from the left
- *   column on the same row of the previous page. A turn only happens
- *   when that cell exists. With four entries per page the page
- *   therefore turns after pressing `->` twice.
+ *   turns from the outer column and prefers the same row: `->` from the
+ *   right column lands on the same row of the next page, `<-` from the
+ *   left column on the same row of the previous page. When the target
+ *   page has no such row the turn falls back to its first cell, and it
+ *   only fails when the target page holds nothing. With four entries
+ *   per page the page therefore turns after pressing `->` twice.
  * - `^` / `v` change the row inside the current page. They never turn
  *   the page.
  * - Every other move that would leave the grid keeps the focus instead

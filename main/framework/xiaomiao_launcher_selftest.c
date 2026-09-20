@@ -257,6 +257,31 @@ static void check_counts(lv_group_t *group)
             XM_CHECK(screen_children() == s_screen_baseline + 1, "empty count keys leaked");
         } else {
             /*
+             * A next page that holds only its first row must still be
+             * reachable from the second row: the turn falls back to
+             * that page's first cell instead of refusing. This is the
+             * shipped case (five Apps, the second page holds Hardware
+             * Test alone). Runs only for counts where page 1 has a
+             * single row, and returns to index 0 either way.
+             */
+            if (n > XIAOMIAO_LAUNCHER_PER_PAGE &&
+                n <= XIAOMIAO_LAUNCHER_PER_PAGE + XIAOMIAO_LAUNCHER_COLUMNS) {
+                press(group, LV_KEY_RIGHT);
+                press(group, LV_KEY_DOWN);
+                XM_CHECK(focus_index() == XIAOMIAO_LAUNCHER_COLUMNS + 1,
+                         "fallback setup reaches the second row");
+
+                press(group, LV_KEY_RIGHT);
+                XM_CHECK(focus_index() == XIAOMIAO_LAUNCHER_PER_PAGE,
+                         "the second row falls back to the next page first cell");
+                XM_CHECK(page_index() == 1, "the fallback turn moved to page 1");
+
+                press(group, LV_KEY_LEFT);
+                press(group, LV_KEY_LEFT);
+                XM_CHECK(focus_index() == 0, "the fallback check returns to index 0");
+            }
+
+            /*
              * Walk to the last index with the rules the grid implies:
              * two rights per page to turn it (right column, then page),
              * then the one or two moves that reach the last slot of the
