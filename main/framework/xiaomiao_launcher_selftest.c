@@ -106,6 +106,13 @@ static const size_t s_counts[] = { 0, 1, 2, 3, 4, 5, 7, 16 };
  * focus index / page that must be visible afterwards. The same table
  * drives the automatic assertions so the synthetic and the real key
  * path verify identical transitions.
+ *
+ * The path is left/right only: it starts and ends at index 0, walks to
+ * the last entry through one page turn, and returns the same way, so a
+ * single traversal covers the clamped start, the page turn in both
+ * directions and the clamped end. The two vertical steps are kept on
+ * purpose to assert that they change nothing (launcher L/R paging goal,
+ * decision 7).
  */
 typedef struct {
     uint32_t key;
@@ -115,21 +122,22 @@ typedef struct {
 } xm_step_t;
 
 static const xm_step_t s_steps[] = {
+    { LV_KEY_LEFT,  0, 0, "LEFT at the start stays" },
+    { LV_KEY_DOWN,  0, 0, "DOWN is ignored" },
+    { LV_KEY_UP,    0, 0, "UP is ignored" },
     { LV_KEY_RIGHT, 1, 0, "RIGHT" },
-    { LV_KEY_RIGHT, 1, 0, "RIGHT (row end)" },
-    { LV_KEY_LEFT,  0, 0, "LEFT" },
-    { LV_KEY_DOWN,  2, 0, "DOWN" },
-    { LV_KEY_UP,    0, 0, "UP" },
-    { LV_KEY_DOWN,  2, 0, "DOWN" },
-    { LV_KEY_DOWN,  4, 1, "DOWN page 2" },
-    { LV_KEY_DOWN,  6, 1, "DOWN last item" },
-    { LV_KEY_DOWN,  6, 1, "DOWN (no more)" },
-    { LV_KEY_UP,    4, 1, "UP" },
+    { LV_KEY_RIGHT, 2, 0, "RIGHT" },
+    { LV_KEY_RIGHT, 3, 0, "RIGHT" },
+    { LV_KEY_RIGHT, 4, 1, "RIGHT turns the page" },
     { LV_KEY_RIGHT, 5, 1, "RIGHT" },
-    { LV_KEY_DOWN,  6, 1, "DOWN last item" },
-    { LV_KEY_UP,    4, 1, "UP" },
-    { LV_KEY_UP,    2, 0, "UP page 1" },
-    { LV_KEY_UP,    0, 0, "UP" },
+    { LV_KEY_RIGHT, 6, 1, "RIGHT" },
+    { LV_KEY_RIGHT, 6, 1, "RIGHT at the end stays" },
+    { LV_KEY_LEFT,  5, 1, "LEFT" },
+    { LV_KEY_LEFT,  4, 1, "LEFT" },
+    { LV_KEY_LEFT,  3, 0, "LEFT turns the page back" },
+    { LV_KEY_LEFT,  2, 0, "LEFT" },
+    { LV_KEY_LEFT,  1, 0, "LEFT" },
+    { LV_KEY_LEFT,  0, 0, "LEFT" },
 };
 
 #define XM_STEP_COUNT (sizeof(s_steps) / sizeof(s_steps[0]))
@@ -251,11 +259,9 @@ static void check_counts(lv_group_t *group)
                      "empty count created no app root");
             XM_CHECK(screen_children() == s_screen_baseline + 1, "empty count keys leaked");
         } else {
-            /* Down settles on the last reachable even index. */
-            for (size_t i = 0; i < n; ++i) {
-                press(group, LV_KEY_DOWN);
-            }
-            if (n % 2 == 0) {
+            /* Right walks the whole Registry and settles on the last
+             * index; there is no vertical move any more. */
+            for (size_t i = 1; i < n; ++i) {
                 press(group, LV_KEY_RIGHT);
             }
             XM_CHECK(focus_index() == n - 1, "count reaches the last index");
@@ -264,9 +270,18 @@ static void check_counts(lv_group_t *group)
 
             /* Further moves must never leave the valid range. */
             press(group, LV_KEY_RIGHT);
+            XM_CHECK(focus_index() == n - 1, "right at the end stays");
             press(group, LV_KEY_DOWN);
-            press(group, LV_KEY_LEFT);
             press(group, LV_KEY_UP);
+            XM_CHECK(focus_index() == n - 1, "vertical keys are ignored");
+
+            if (n > 1) {
+                press(group, LV_KEY_LEFT);
+                XM_CHECK(focus_index() == n - 2, "left steps back one entry");
+                press(group, LV_KEY_RIGHT);
+                XM_CHECK(focus_index() == n - 1, "right returns to the end");
+            }
+
             XM_CHECK(focus_index() < n, "count focus stays in range");
             XM_CHECK(page_index() == focus_index() / XIAOMIAO_LAUNCHER_PER_PAGE,
                      "count page matches focus");
@@ -285,9 +300,11 @@ static void check_moves_auto(lv_group_t *group)
 
     /* Boundary moves that must keep the focus. */
     press(group, LV_KEY_LEFT);
-    XM_CHECK(focus_index() == 0, "left at row start stays");
+    XM_CHECK(focus_index() == 0, "left at the start stays");
     press(group, LV_KEY_UP);
-    XM_CHECK(focus_index() == 0, "up on top row stays");
+    XM_CHECK(focus_index() == 0, "up is ignored");
+    press(group, LV_KEY_DOWN);
+    XM_CHECK(focus_index() == 0, "down is ignored");
 
     for (size_t i = 0; i < XM_STEP_COUNT; ++i) {
         press(group, s_steps[i].key);
@@ -326,8 +343,13 @@ static void check_open_back_auto(lv_group_t *group)
         XM_CHECK(focus_index() == 0, "auto open kept focus");
         XM_CHECK(page_index() == 0, "auto open kept page");
 
-        /* Arrow keys are ignored while an App is open. */
-        press(group, LV_KEY_DOWN);
+        /*
+         * Arrow keys are ignored while an App is open. Right is used on
+         * purpose: it would move the focus if the guard were missing,
+         * while the vertical keys never move it any more (launcher L/R
+         * paging goal, decision 8).
+         */
+        press(group, LV_KEY_RIGHT);
         XM_CHECK(focus_index() == 0, "arrow ignored while app open");
 
         /* destroy is refused while an App is open and changes nothing. */

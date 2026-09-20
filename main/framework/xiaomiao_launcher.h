@@ -2,9 +2,17 @@
  * Xiaomiao Launcher (design doc section 4, goal node 3).
  *
  * The Launcher is the root page on top of Navigation. It builds a fixed
- * 2 x 2 entry grid from the App Registry, moves focus with the arrow
- * keys, opens the focused App with A through Navigation and keeps its
- * page and focus when the App returns.
+ * 2 x 2 entry grid from the App Registry, moves focus with the left and
+ * right keys, opens the focused App with A through Navigation and keeps
+ * its page and focus when the App returns.
+ *
+ * Navigation model (launcher L/R paging goal, decisions 1 to 3):
+ * - The Registry is read as one left-to-right sequence, and `<-` / `->`
+ *   step one entry forward or back. The four slots of a page are
+ *   visited in row-major order, so stepping past the fourth one turns
+ *   the page.
+ * - Both ends clamp instead of wrapping.
+ * - `^` / `v` are not navigation keys and change nothing.
  *
  * Ownership and layout contract:
  * - The Launcher does not keep a copy of the App list. It reads App

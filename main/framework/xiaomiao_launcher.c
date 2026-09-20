@@ -46,11 +46,10 @@ typedef struct {
     lv_obj_t *name;
 } launcher_slot_t;
 
+/* The Launcher only navigates horizontally; there is no vertical move. */
 typedef enum {
     LAUNCHER_MOVE_LEFT = 0,
     LAUNCHER_MOVE_RIGHT,
-    LAUNCHER_MOVE_UP,
-    LAUNCHER_MOVE_DOWN,
 } launcher_move_t;
 
 static lv_obj_t *s_root;
@@ -140,47 +139,27 @@ static void launcher_render_page(void)
 }
 
 /*
- * Target index for one direction key. Left and right stay inside the
- * current row; up and down move two indices and may cross pages. The
- * only in-range fallback is down from the right column when the target
- * index is past the end: it lands on the left entry of that last row
- * (goal decision 5). Every other out-of-range move keeps the focus.
+ * Target index for one horizontal move. The Launcher reads the Registry
+ * as a single left-to-right sequence: the four slots of a page are
+ * visited in row-major order (0, 1, 2, 3) and stepping past the fourth
+ * one turns the page. Both ends clamp instead of wrapping, so the focus
+ * never leaves the valid range (launcher L/R paging goal, decisions 1
+ * and 2).
  */
 static size_t launcher_next_index(launcher_move_t direction)
 {
     const size_t count = xiaomiao_app_registry_count();
     const size_t index = s_focus;
-    const size_t column = index % XIAOMIAO_LAUNCHER_COLUMNS;
 
     if (count == 0) {
         return index;
     }
 
-    switch (direction) {
-    case LAUNCHER_MOVE_LEFT:
-        return (column > 0) ? index - 1 : index;
-
-    case LAUNCHER_MOVE_RIGHT:
-        return (column + 1 < XIAOMIAO_LAUNCHER_COLUMNS && index + 1 < count)
-                   ? index + 1
-                   : index;
-
-    case LAUNCHER_MOVE_UP:
-        return (index >= XIAOMIAO_LAUNCHER_COLUMNS)
-                   ? index - XIAOMIAO_LAUNCHER_COLUMNS
-                   : index;
-
-    case LAUNCHER_MOVE_DOWN:
-        if (index + XIAOMIAO_LAUNCHER_COLUMNS < count) {
-            return index + XIAOMIAO_LAUNCHER_COLUMNS;
-        }
-        if (column + 1 == XIAOMIAO_LAUNCHER_COLUMNS && index + 1 < count) {
-            return index + 1;
-        }
-        return index;
+    if (direction == LAUNCHER_MOVE_LEFT) {
+        return (index > 0) ? index - 1 : index;
     }
 
-    return index;
+    return (index + 1 < count) ? index + 1 : index;
 }
 
 static void launcher_move(launcher_move_t direction)
@@ -283,12 +262,6 @@ static void launcher_key_cb(lv_event_t *event)
     case LV_KEY_RIGHT:
         launcher_move(LAUNCHER_MOVE_RIGHT);
         break;
-    case LV_KEY_UP:
-        launcher_move(LAUNCHER_MOVE_UP);
-        break;
-    case LV_KEY_DOWN:
-        launcher_move(LAUNCHER_MOVE_DOWN);
-        break;
     case LV_KEY_ENTER:
         launcher_activate();
         break;
@@ -296,6 +269,12 @@ static void launcher_key_cb(lv_event_t *event)
         launcher_go_back();
         break;
     default:
+        /*
+         * Up and down are deliberately not navigation keys: the
+         * Launcher is a left/right pager, so a second way to change the
+         * page would give the same transition two entry points
+         * (launcher L/R paging goal, decision 3).
+         */
         break;
     }
 }
