@@ -37,6 +37,10 @@
 #include "sdmmc_cmd.h"
 #include "sdkconfig.h"
 
+#if XIAOMIAO_FRAMEWORK_SELF_TEST
+#include "framework/xiaomiao_framework_selftest.h"
+#endif
+
 #ifndef CONFIG_IDF_TARGET
 #define CONFIG_IDF_TARGET "esp32"
 #endif
@@ -2205,6 +2209,13 @@ static void lvgl_task(void *arg)
 
 void app_main(void)
 {
+#if XIAOMIAO_FRAMEWORK_SELF_TEST
+    ESP_LOGI(TAG, "Self test build: skipping dashboard");
+    xiaomiao_framework_selftest_run();
+    ESP_LOGI(TAG, "Self test done, halting");
+    vTaskSuspend(NULL);
+#endif
+
     ESP_LOGI(TAG, "Xiaomiao LVGL 9.5 dashboard boot");
 
     sensor_history_init();

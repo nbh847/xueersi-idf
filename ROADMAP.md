@@ -8,12 +8,13 @@
 - Dashboard 已覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统和 About。
 - ESP32 端已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。
 - GD32 工程当前只确认实现 USB CDC、USART1 桥和 ESP32 IO0/EN 控制；I2C `0x40` LED/电机从机协议未在仓库源码中实现。
-- Launcher、App Framework、Service 和 BSP 分层仍处于设计阶段。
+- Launcher、App Framework、Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，位于 `main/framework/`；Launcher、Navigation 和 App 切换尚未实现。
 
 ## 当前开发节点
 
 - 节点 0“构建基线恢复”已完成（2026-09-19，全新配置构建、烧录和基础交互验证通过；未覆盖全部外设回归）。施工文档为 `goals/20260919-1834-build-baseline.md`。
-- 下一个开发节点为节点 1“App Framework”，施工文档为 `goals/20260919-2037-app-runtime.md`，尚未开始。
+- 节点 1“App Framework”已完成（2026-09-20，框架代码、自测代码、普通构建、自测构建、自测固件 PASS 标记和普通固件 Dashboard 回归均通过）。施工文档为 `goals/20260919-2037-app-runtime.md`。
+- 下一个开发节点为节点 2“Navigation”，尚未开始。
 - GD32 实机固件与 README 中 `0x40` 协议的对应关系仍在待确认状态，不阻塞不依赖 LED、电机的 v0.1 框架开发。
 
 ## 有序开发节点
@@ -21,7 +22,7 @@
 节点定义、交付和验收标准见 `docs/xiaomiao_firmware_v0.1_design.md` 第 15 节；此处只维护唯一进度状态。
 
 - [x] 节点 0：构建基线恢复。
-- [ ] 节点 1：App Framework。
+- [x] 节点 1：App Framework。
 - [ ] 节点 2：Navigation。
 - [ ] 节点 3：Launcher。
 - [ ] 节点 4：Hardware Test App。
@@ -40,8 +41,8 @@
 
 ## 下一步
 
-1. 实施节点 1，只建立 App 接口、Registry、Manager 和最小测试 App，不提前开发 Launcher。
-2. 节点 1 验收后再实施节点 2，建立统一导航和返回机制。
+1. 实施节点 2“Navigation”，建立统一导航和返回机制；以节点 1 的 App Framework 为基础，不提前开发 Launcher。
+2. 节点 2 验收后再实施节点 3“Launcher”。
 3. 在节点 4“Hardware Test App”中逐项回归 LED、电机、MicroSD、MPU6050 等外设。
 
 ## 待确认与已知风险
@@ -53,6 +54,7 @@
 
 ## 最近完成
 
+- 2026-09-20 07:33：完成节点 1“App Framework”：在 `main/framework/` 实现 `xiaomiao_app_t` 描述、静态 Registry（容量 16）、生命周期 Manager（init_all/open/close/current）和开发自测；通过 CMake option `XIAOMIAO_FRAMEWORK_SELF_TEST` 接入；普通构建和自测构建均通过 ESP-IDF 6.1 编译，自测固件串口输出 `APP_FRAMEWORK_SELF_TEST: PASS`，普通固件 15 页 Dashboard 翻页及 A/B 键回归通过。
 - 2026-09-19 20:50：将 `dependencies.lock` 独立同步到项目的 ESP-IDF 6.1 基线（IDF 6.1.0、锁文件格式 3.0.0）；LVGL 仍为 9.5.0，`manifest_hash` 未变化。
 - 2026-09-19 20:37：创建节点 1“App Framework”施工文档，明确框架接口、静态 Registry、生命周期 Manager、自测方式、范围边界和验收标准；尚未启动执行。
 - 2026-09-19 20:35：完成节点 0 补充实机验证，固件可正常烧录和启动，15 个 Dashboard 页面均可翻页，A/B 键操作正常；未将未测试外设标记为已验证。
@@ -66,6 +68,8 @@
 
 ## 最近验证
 
+- 2026-09-20 08:08（节点 1 主 Agent 复核）：逐项核对 Goal 验收条款、实际源码、CMake 接入和 Git 改动范围，未发现阻塞缺陷；`git diff --check` 无错误。普通构建、自测构建、烧录、自测 PASS 标记和 Dashboard 实机回归采用已记录证据及用户确认的成功结果，本次未重复构建或烧录。
+- 2026-09-20 07:33（节点 1 验收）：普通构建 exit=0，烧录后串口出现 `Xiaomiao LVGL 9.5 dashboard boot`，15 页翻页及 A/B 键正常。自测构建（`.tmp/build-selftest/`，`XIAOMIAO_FRAMEWORK_SELF_TEST=ON`）exit=0，`xiaomiao.bin` 0xa47f0 字节，应用分区 36% free；烧录后串口出现 `APP_FRAMEWORK_SELF_TEST: PASS`。未修改 GD32、硬件协议、依赖版本或 `dependencies.lock`。
 - 2026-09-19 20:50：使用项目实际 Python 环境直接调用 `tools/idf.py --version`，输出 `ESP-IDF v6.1.0`；当前 `dependencies.lock` 与节点 0 隔离构建保存的锁快照哈希一致。本次未重新执行完整固件构建，以避免将工作区其他未提交源码改动混入依赖锁定验证；节点 0 已记录同一锁快照的完整构建证据。
 - 2026-09-19 20:37：核对节点 1 Goal 与 v0.1 设计文档、当前 `main/main.c` 单文件结构和现有 CMake 入口，确认本 Goal 未扩大到 Navigation、Launcher、硬件迁移或 GD32 固件。
 - 2026-09-19 20:35（节点 0 实机验证）：目标设备烧录成功并正常运行；15 个 Dashboard 页面翻页、A/B 键操作通过。未覆盖：LED、电机、MicroSD、MPU6050 等逐项外设测试。
