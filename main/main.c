@@ -49,6 +49,10 @@
 #include "framework/xiaomiao_launcher_selftest.h"
 #endif
 
+#include "framework/xiaomiao_app.h"
+#include "framework/xiaomiao_launcher.h"
+#include "framework/xiaomiao_navigation.h"
+
 #ifndef CONFIG_IDF_TARGET
 #define CONFIG_IDF_TARGET "esp32"
 #endif
@@ -164,6 +168,21 @@
 #define GD32_REPROBE_PERIOD_MS      1500
 #define MPU_REPROBE_PERIOD_MS       1500
 #define SD_SPI_MAX_FREQ_KHZ         10000
+
+/* Hardware Test App registration (goal node 4, decision 1). */
+#define HARDWARE_TEST_APP_ID        "hardware_test"
+#define HARDWARE_TEST_APP_NAME      "Hardware Test"
+#define HARDWARE_TEST_APP_ICON      LV_SYMBOL_SETTINGS
+
+/*
+ * B key gesture (goal node 4, decisions 8 and 9): a short press keeps the
+ * current page action, a long press returns to the Launcher. The threshold
+ * is measured from the press edge in keypad_read_cb(); the hint reuses the
+ * existing action status line instead of adding UI elements.
+ */
+#define BTN_B_LONG_PRESS_MS         800
+#define BTN_B_HOLD_HINT_MS          300
+#define BTN_B_HOLD_HINT_TEXT        "Hold to exit"
 
 #define GD32_ADDR                   0x40
 #define GD32_LED1_REG               0xA0
@@ -1049,6 +1068,104 @@ static void lvgl_tick_cb(void *arg)
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
+static void ui_cancel(void);
+
+/*
+ * B key gesture (goal node 4, decisions 8 and 9).
+ *
+ * LVGL's keypad path dispatches LV_KEY_ESC to the focused object only on the
+ * press edge, re-sends it every long_press_repeat_time while B stays held and
+ * never delivers a release event for it, so the gesture cannot be detected from
+ * object key events. Detection therefore rides on the debounced edges that
+ * keypad_read_cb() already produces, and the actions run from the LVGL loop so
+ * that no LVGL object is ever deleted inside the indev read callback.
+ */
+
+static bool s_b_held;
+static uint32_t s_b_press_ms;
+static bool s_b_long_fired;
+static bool s_b_hint_shown;
+static bool s_b_exit_pending;
+static bool s_b_short_pending;
+
+static bool hardware_test_is_open(void)
+{
+    return s_ui.screen != NULL;
+}
+
+static void hardware_test_b_gesture_reset(void)
+{
+    s_b_held = false;
+    s_b_long_fired = false;
+    s_b_hint_shown = false;
+    s_b_exit_pending = false;
+    s_b_short_pending = false;
+}
+
+/* Records the gesture only; the outcome is run by the poll below. */
+static void hardware_test_b_gesture_update(uint32_t key, bool pressed)
+{
+    if (!hardware_test_is_open()) {
+        /* The Launcher owns B while no App is open. */
+        hardware_test_b_gesture_reset();
+        return;
+    }
+
+    const bool b_down = pressed && (key == LV_KEY_ESC);
+
+    if (b_down && !s_b_held) {
+        s_b_held = true;
+        s_b_press_ms = lv_tick_get();
+        s_b_long_fired = false;
+        s_b_hint_shown = false;
+        return;
+    }
+
+    if (!b_down) {
+        if (s_b_held) {
+            s_b_held = false;
+            if (!s_b_long_fired) {
+                s_b_short_pending = true;
+            }
+        }
+        return;
+    }
+
+    const uint32_t held_ms = lv_tick_elaps(s_b_press_ms);
+    if (!s_b_long_fired && held_ms >= BTN_B_LONG_PRESS_MS) {
+        s_b_long_fired = true;
+        s_b_hint_shown = true;
+        s_b_exit_pending = true;
+    }
+    else if (!s_b_hint_shown && held_ms >= BTN_B_HOLD_HINT_MS) {
+        s_b_hint_shown = true;
+        set_action(BTN_B_HOLD_HINT_TEXT);
+    }
+}
+
+/* Runs the recorded outcome. Call from the LVGL loop only. */
+static void hardware_test_b_gesture_poll(void)
+{
+    if (s_b_exit_pending) {
+        s_b_exit_pending = false;
+        s_b_short_pending = false;
+
+        esp_err_t err = xiaomiao_navigation_back();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "return to launcher failed: %s (0x%x)",
+                     esp_err_to_name(err), (unsigned)err);
+        }
+        return;
+    }
+
+    if (s_b_short_pending) {
+        s_b_short_pending = false;
+        if (hardware_test_is_open()) {
+            ui_cancel();
+        }
+    }
+}
+
 static void keypad_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
@@ -1086,6 +1203,8 @@ static void keypad_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->state = LV_INDEV_STATE_RELEASED;
         data->key = last_key;
     }
+
+    hardware_test_b_gesture_update(data->key, data->state == LV_INDEV_STATE_PRESSED);
 }
 
 static void buttons_init(void)
@@ -2146,16 +2265,22 @@ static void ui_key_event_cb(lv_event_t *e)
     else if (key == LV_KEY_ENTER) {
         ui_action();
     }
-    else if (key == LV_KEY_ESC) {
-        ui_cancel();
-    }
+
+    /*
+     * LV_KEY_ESC (B) is deliberately not handled here. The B gesture is
+     * decided by hardware_test_b_gesture_update() and executed from
+     * hardware_test_b_gesture_poll(), so that a short press keeps the
+     * page action while a long press returns to the Launcher, and so that
+     * the repeated LV_KEY_ESC events LVGL sends while B is held stay
+     * inert (goal node 4, decisions 8 and 9).
+     */
 }
 
-static void ui_create(lv_group_t *group)
+static void ui_create(lv_group_t *group, lv_obj_t *parent)
 {
     s_ui.group = group;
     s_ui.page_id = UI_PAGE_LIGHT;
-    s_ui.screen = lv_obj_create(lv_screen_active());
+    s_ui.screen = lv_obj_create(parent);
     lv_obj_remove_style_all(s_ui.screen);
     lv_obj_set_size(s_ui.screen, LCD_H_RES, LCD_V_RES);
     lv_obj_set_style_bg_color(s_ui.screen, lv_color_hex(UI_YELLOW), 0);
@@ -2167,6 +2292,105 @@ static void ui_create(lv_group_t *group)
     lv_obj_add_event_cb(s_ui.screen, ui_key_event_cb, LV_EVENT_KEY, NULL);
     ui_show_page(UI_PAGE_LIGHT, 0);
 }
+
+/*
+ * Hardware Test App (goal node 4). The Dashboard keeps living in this file:
+ * only the lifecycle, the parent object, the input arbitration and the
+ * refresh gate change. Hardware is still initialized once in app_main.
+ */
+
+static lv_group_t *s_input_group;
+
+static void hardware_test_open(void)
+{
+    if (s_ui.screen != NULL) {
+        ESP_LOGE(TAG, "hardware test is already open");
+        return;
+    }
+
+    if (s_input_group == NULL) {
+        ESP_LOGE(TAG, "LVGL input group is not ready");
+        return;
+    }
+
+    lv_obj_t *root = xiaomiao_navigation_app_root();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "no App content root to build the dashboard in");
+        return;
+    }
+
+    hardware_test_b_gesture_reset();
+    ui_create(s_input_group, root);
+
+    /*
+     * Observable for the lifecycle check (goal node 4, checkpoint 2): the
+     * previous App content root is already gone here, so the active screen
+     * must hold exactly the Launcher root and the new App content root. A
+     * growing count across entries means a leaked root.
+     */
+    ESP_LOGI(TAG, "hardware test opened, screen children=%u",
+             (unsigned)lv_obj_get_child_count(lv_screen_active()));
+}
+
+static void hardware_test_close(void)
+{
+    hardware_test_b_gesture_reset();
+
+    /* Stop continuous outputs before the UI disappears (decision 11). */
+    buzzer_stop();
+
+    for (uint8_t motor = 0; motor < 2; ++motor) {
+        if (!s_board.motor_running[motor]) {
+            continue;
+        }
+        ui_motor_stop(motor);
+        if (s_board.motor_running[motor]) {
+            ESP_LOGW(TAG, "motor %u stop failed: %s (0x%x)",
+                     (unsigned)motor + 1,
+                     esp_err_to_name(s_board.last_gd32_err),
+                     (unsigned)s_board.last_gd32_err);
+        }
+    }
+
+    if (s_ui.screen != NULL) {
+        lv_group_remove_obj(s_ui.screen);
+    }
+
+    /* Drop every UI reference so the periodic loop cannot reach deleted objects. */
+    s_ui.screen = NULL;
+    s_ui.page = NULL;
+    s_ui.title = NULL;
+    s_ui.value = NULL;
+    s_ui.sub = NULL;
+    s_ui.bar = NULL;
+    s_ui.chart = NULL;
+    s_ui.chart_head = NULL;
+    s_ui.status = NULL;
+    s_ui.hint = NULL;
+    s_ui.accent = NULL;
+    s_ui.chart_series = NULL;
+    s_ui.chart_history_version = 0;
+    s_ui.group = NULL;
+    s_ui.page_id = UI_PAGE_LIGHT;
+
+    /*
+     * Same observable as open, plus the Launcher state that must survive the
+     * App round trip (goal node 4, decisions 7 and 12).
+     */
+    ESP_LOGI(TAG, "hardware test closed, screen children=%u, launcher focus=%u page=%u",
+             (unsigned)lv_obj_get_child_count(lv_screen_active()),
+             (unsigned)xiaomiao_launcher_focused_index(),
+             (unsigned)xiaomiao_launcher_page_index());
+}
+
+static const xiaomiao_app_t s_hardware_test_app = {
+    .id = HARDWARE_TEST_APP_ID,
+    .name = HARDWARE_TEST_APP_NAME,
+    .icon = HARDWARE_TEST_APP_ICON,
+    .init = NULL,
+    .open = hardware_test_open,
+    .close = hardware_test_close,
+};
 
 static lv_group_t *lvgl_input_init(lv_display_t *display)
 {
@@ -2186,13 +2410,54 @@ static lv_group_t *lvgl_input_init(lv_display_t *display)
     return group;
 }
 
+/*
+ * Normal firmware startup chain (goal node 4, checkpoint 1): register the
+ * official Apps, initialize the App Manager and show the Launcher. Each stage
+ * reports its own error and stops there instead of falling back to a directly
+ * built dashboard.
+ */
+static esp_err_t launcher_boot(lv_group_t *group)
+{
+    esp_err_t err = xiaomiao_app_registry_register(&s_hardware_test_app);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register '%s' failed: %s (0x%x)",
+                 HARDWARE_TEST_APP_ID, esp_err_to_name(err), (unsigned)err);
+        return err;
+    }
+
+    err = xiaomiao_app_manager_init_all();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "App manager init failed: %s (0x%x)",
+                 esp_err_to_name(err), (unsigned)err);
+        return err;
+    }
+
+    err = xiaomiao_launcher_create(group);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Launcher create failed: %s (0x%x)",
+                 esp_err_to_name(err), (unsigned)err);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Launcher ready, %u app(s) registered",
+             (unsigned)xiaomiao_app_registry_count());
+    return ESP_OK;
+}
+
 static void lvgl_task(void *arg)
 {
     lv_group_t *group = (lv_group_t *)arg;
     uint32_t last_update_ms = 0;
 
-    ESP_LOGI(TAG, "Start Xiaomiao hardware dashboard");
-    ui_create(group);
+    ESP_LOGI(TAG, "Start Xiaomiao launcher");
+    s_input_group = group;
+
+    esp_err_t boot_err = launcher_boot(group);
+    if (boot_err != ESP_OK) {
+        ESP_LOGE(TAG, "startup incomplete: %s (0x%x)",
+                 esp_err_to_name(boot_err), (unsigned)boot_err);
+    }
+
     s_lcd_first_flush_done = false;
     lv_refr_now(NULL);
     for (uint8_t i = 0; i < 100 && !s_lcd_first_flush_done; ++i) {
@@ -2202,10 +2467,15 @@ static void lvgl_task(void *arg)
 
     while (true) {
         hardware_process_timers();
+        hardware_test_b_gesture_poll();
+
         if (lv_tick_elaps(last_update_ms) >= UI_REFRESH_PERIOD_MS) {
             last_update_ms = lv_tick_get();
-            hardware_update();
-            ui_refresh();
+            /* Only refresh the dashboard while the Hardware Test App is open. */
+            if (hardware_test_is_open()) {
+                hardware_update();
+                ui_refresh();
+            }
         }
 
         uint32_t delay_ms = lv_timer_handler();
@@ -2331,7 +2601,7 @@ void app_main(void)
                                  NULL);
     ESP_ERROR_CHECK(ret == pdPASS ? ESP_OK : ESP_FAIL);
 #else
-    ESP_LOGI(TAG, "Xiaomiao LVGL 9.5 dashboard boot");
+    ESP_LOGI(TAG, "Xiaomiao LVGL 9.5 launcher boot");
 
     sensor_history_init();
     buttons_init();
