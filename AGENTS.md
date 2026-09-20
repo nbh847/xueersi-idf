@@ -10,7 +10,7 @@
 
 ## 项目结构与模块组织
 
-- `main/main.c` 是当前 ESP32-WROVER-B 固件的主业务源文件，包含 LVGL 9.5 硬件 Dashboard（注册为 `Hardware Test` App）及屏幕、按键、ADC、I2C、蜂鸣器和 MicroSD 驱动，并持有普通固件的启动链。`main/framework/` 是 App Framework 运行时，`main/apps/<app>/` 存放业务 App（当前有占位 `Games` 与静态骨架 `PC Monitor`）；`services/` 与 `bsp/` 分层尚未建立。
+- `main/main.c` 是当前 ESP32-WROVER-B 固件的主业务源文件，包含 LVGL 9.5 硬件 Dashboard（注册为 `Hardware Test` App）及屏幕、按键、ADC、I2C、蜂鸣器和 MicroSD 驱动，并持有普通固件的启动链。`main/framework/` 是 App Framework 运行时，`main/apps/<app>/` 存放业务 App（当前有占位 `Games`、静态骨架 `PC Monitor` 与菜单 `Tools`）；`services/` 与 `bsp/` 分层尚未建立。
 - `main/idf_component.yml` 固定组件依赖，`sdkconfig.defaults` 与 `sdkconfig.ci` 保存可复现的 ESP-IDF 配置。
 - `GD32_firmware/` 是独立的 GD32F350 Keil 工程；当前仓库源码实现 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现 README 所述的 I2C `0x40` LED/电机从机协议。请勿把厂商库改动混入 ESP32 功能提交。
 - `docs/` 存放设计说明，`README.md` 记录已确认的引脚和协议，根目录 PDF 为硬件原理图。

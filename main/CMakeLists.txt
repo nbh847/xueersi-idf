@@ -10,7 +10,8 @@ set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
 # Business Apps. The self test builds keep their own test data and never
 # register these descriptions (goal node 5, decision 14).
 set(APP_SRCS "apps/games/xiaomiao_games.c"
-             "apps/pc_monitor/xiaomiao_pc_monitor.c")
+             "apps/pc_monitor/xiaomiao_pc_monitor.c"
+             "apps/tools/xiaomiao_tools.c")
 
 if(XIAOMIAO_FRAMEWORK_SELF_TEST)
     list(APPEND FRAMEWORK_SRCS "framework/xiaomiao_framework_selftest.c")
@@ -27,6 +28,7 @@ endif()
 idf_component_register(SRCS "main.c" ${FRAMEWORK_SRCS} ${APP_SRCS}
                        PRIV_REQUIRES esp_lcd
                                      esp_timer
+                                     esp_app_format
                                      esp_driver_gpio
                                      esp_driver_spi
                                      esp_driver_i2c
