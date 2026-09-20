@@ -6,7 +6,7 @@
 
 ## 当前实现
 
-ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。当前 Dashboard 业务代码仍位于 `main/main.c`；App Framework 运行时（App 描述、Registry、Manager、Navigation）位于 `main/framework/`，尚未接入默认启动链。当前启动链为：
+ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。当前 Dashboard 业务代码仍位于 `main/main.c`；App Framework 运行时（App 描述、Registry、Manager、Navigation、Launcher）位于 `main/framework/`，尚未接入默认启动链。当前启动链为：
 
 ```text
 app_main
@@ -42,8 +42,8 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 ## 目标架构与演进约束
 
-`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager 和 Navigation（统一打开／返回、App 内容根对象所有权）；Launcher、BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C。
+`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation（统一打开／返回、App 内容根对象所有权）与 Launcher（2 列 × 2 行动态入口、焦点移动、分页、经 Navigation 进入／返回）；Launcher 尚未接入普通固件默认启动，BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C。
 
 ## 验证入口与已知缺口
 
-仓库目前没有自动化测试。最低验证为 `idf.py build`；硬件改动还需烧录实机，检查启动日志、六个按键、屏幕刷新及受影响外设。当前待解决事项以 `ROADMAP.md` 为准，主要包括 Launcher 架构尚未实现、GD32 `0x40` 协议源码缺失，以及 MicroSD/GPIO22 冲突需在实机复核。
+仓库目前没有自动化测试。最低验证为 `idf.py build`；硬件改动还需烧录实机，检查启动日志、六个按键、屏幕刷新及受影响外设。`main/framework/` 的 Framework、Navigation、Launcher 分别提供 `XIAOMIAO_FRAMEWORK_SELF_TEST`、`XIAOMIAO_NAVIGATION_SELF_TEST`、`XIAOMIAO_LAUNCHER_SELF_TEST` 三个默认关闭的自测构建选项，编译、烧录与按键验证由人工执行。当前待解决事项以 `ROADMAP.md` 为准，主要包括 Launcher 已实现但尚未接入默认启动（切换留到节点 4）、GD32 `0x40` 协议源码缺失，以及 MicroSD/GPIO22 冲突需在实机复核。

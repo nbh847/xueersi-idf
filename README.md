@@ -16,7 +16,7 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；当前默认界面仍是 `main/main.c` 中的 15 页硬件状态 Dashboard。App Framework 核心运行时已在 `main/framework/` 实现，Navigation 与 Launcher 尚未实现。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；当前默认界面仍是 `main/main.c` 中的 15 页硬件状态 Dashboard。App Framework 核心运行时、Navigation 与 Launcher 已在 `main/framework/` 实现；Launcher 的默认启动切换与 Hardware Test App 迁移留到节点 4。
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，三重缓冲，稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。

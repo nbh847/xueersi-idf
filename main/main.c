@@ -45,6 +45,10 @@
 #include "framework/xiaomiao_navigation_selftest.h"
 #endif
 
+#if XIAOMIAO_LAUNCHER_SELF_TEST
+#include "framework/xiaomiao_launcher_selftest.h"
+#endif
+
 #ifndef CONFIG_IDF_TARGET
 #define CONFIG_IDF_TARGET "esp32"
 #endif
@@ -2234,6 +2238,29 @@ static void navigation_selftest_task(void *arg)
 }
 #endif
 
+#if XIAOMIAO_LAUNCHER_SELF_TEST
+static void launcher_selftest_task(void *arg)
+{
+    lv_group_t *group = (lv_group_t *)arg;
+
+    ESP_LOGI(TAG, "Start launcher self test");
+    xiaomiao_launcher_selftest_run(group);
+    s_lcd_first_flush_done = false;
+    lv_refr_now(NULL);
+    for (uint8_t i = 0; i < 100 && !s_lcd_first_flush_done; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    lcd_display_on();
+
+    while (true) {
+        uint32_t delay_ms = lv_timer_handler();
+        delay_ms = MAX(delay_ms, LVGL_TASK_MIN_DELAY_MS);
+        delay_ms = MIN(delay_ms, LVGL_TASK_MAX_DELAY_MS);
+        usleep(delay_ms * 1000);
+    }
+}
+#endif
+
 void app_main(void)
 {
 #if XIAOMIAO_FRAMEWORK_SELF_TEST
@@ -2266,6 +2293,37 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000));
 
     BaseType_t ret = xTaskCreate(navigation_selftest_task,
+                                 "lvgl",
+                                 LVGL_TASK_STACK_SIZE,
+                                 group,
+                                 LVGL_TASK_PRIORITY,
+                                 NULL);
+    ESP_ERROR_CHECK(ret == pdPASS ? ESP_OK : ESP_FAIL);
+#elif XIAOMIAO_LAUNCHER_SELF_TEST
+    ESP_LOGI(TAG, "Launcher self test build: skipping dashboard");
+
+    buttons_init();
+
+    esp_lcd_panel_io_handle_t io_handle = lcd_init();
+
+    lv_init();
+    lv_display_t *display = lvgl_display_init(io_handle);
+    lv_group_t *group = lvgl_input_init(display);
+
+    esp_lcd_panel_io_callbacks_t callbacks = {
+        .on_color_trans_done = lcd_flush_ready_cb,
+    };
+    ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(io_handle, &callbacks, display));
+
+    const esp_timer_create_args_t tick_timer_args = {
+        .callback = lvgl_tick_cb,
+        .name = "lvgl_tick",
+    };
+    esp_timer_handle_t tick_timer = NULL;
+    ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000));
+
+    BaseType_t ret = xTaskCreate(launcher_selftest_task,
                                  "lvgl",
                                  LVGL_TASK_STACK_SIZE,
                                  group,

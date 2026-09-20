@@ -8,13 +8,14 @@
 - Dashboard 已覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统和 About。
 - ESP32 端已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。
 - GD32 工程当前只确认实现 USB CDC、USART1 桥和 ESP32 IO0/EN 控制；I2C `0x40` LED/电机从机协议未在仓库源码中实现。
-- Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，Navigation 统一进入／返回与内容根对象所有权已于节点 2 实现，均位于 `main/framework/`；Launcher 与正式 App 切换尚未实现。
+- Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，Navigation 统一进入／返回与内容根对象所有权已于节点 2 实现，Launcher 两列首页、焦点与分页已于节点 3 实现，均位于 `main/framework/`；普通固件默认入口仍为 Dashboard，正式 App 切换与 Hardware Test App 尚未实现。
 
 ## 当前开发节点
 
 - 节点 0“构建基线恢复”已完成（2026-09-19，全新配置构建、烧录和基础交互验证通过；未覆盖全部外设回归）。施工文档为 `goals/20260919-1834-build-baseline.md`。
 - 节点 1“App Framework”已完成（2026-09-20，框架代码、自测代码、普通构建、自测构建、自测固件 PASS 标记和普通固件 Dashboard 回归均通过）。施工文档为 `goals/20260919-2037-app-runtime.md`。
 - 节点 2“Navigation”已完成（2026-09-20，导航运行时 + 自测 + 自测固件实机 PASS + 普通构建 15 页 Dashboard 回归全部通过）。施工文档为 `goals/20260920-0816-navigation.md`。
+- 节点 3“Launcher”已完成（2026-09-20，运行时代码 + 自测代码 + 自测构建实机 `LAUNCHER_SELF_TEST: PASS` + 普通构建 15 页 Dashboard 回归与视觉三项确认全部通过）。本节点先通过专用自测构建验收动态入口、焦点和分页，普通固件继续启动 Dashboard，节点 4 接入 Hardware Test App 后再切换默认启动。施工文档为 `goals/20260920-1007-launcher.md`。
 - GD32 实机固件与 README 中 `0x40` 协议的对应关系仍在待确认状态，不阻塞不依赖 LED、电机的 v0.1 框架开发。
 
 ## 有序开发节点
@@ -24,7 +25,7 @@
 - [x] 节点 0：构建基线恢复。
 - [x] 节点 1：App Framework。
 - [x] 节点 2：Navigation。
-- [ ] 节点 3：Launcher。
+- [x] 节点 3：Launcher。
 - [ ] 节点 4：Hardware Test App。
 - [ ] 节点 5：Games 占位 App。
 - [ ] 节点 6：PC Monitor UI。
@@ -41,8 +42,7 @@
 
 ## 下一步
 
-1. 实施节点 3“Launcher”：在 Navigation 之上构建两列首页、焦点网格与分页，以现有 Dashboard 行为为回归基线。
-2. 在节点 4“Hardware Test App”中逐项回归 LED、电机、MicroSD、MPU6050 等外设。
+1. 实施节点 4“Hardware Test App”：把现有 15 页 Dashboard 封装为 App，将普通固件默认入口从 Dashboard 切换为 Launcher，并逐项回归 LED、电机、MicroSD、MPU6050 等外设。切换前需复核 Launcher 在“App 打开”状态下转发 B 的分支（见节点 3 Goal 的已知边界）。
 
 ## 待确认与已知风险
 
@@ -53,6 +53,9 @@
 
 ## 最近完成
 
+- 2026-09-20 10:43：完成节点 3“Launcher”：自测构建与普通构建均经人工编译通过（`xiaomiao.bin` 0x88580，应用分区 47% free），自测固件自动断言（0/1/2/3/4/5/7/16 数量边界、未初始化打开失败、App 打开期间 `destroy()` 被拒、两轮 open/back）与实机按键路径（15 步方向遍历 + 3 轮 open/back）输出 `LAUNCHER_SELF_TEST: PASS`，普通固件启动 `Xiaomiao LVGL 9.5 dashboard boot`、按键回归正常，2 列 × 2 行布局／焦点反馈／省略号截断／页码切换四项视觉确认符合预期。首轮编译失败已定位为自测宏参数名与结构体字段名重名，重命名后修复。普通固件默认入口仍为 Dashboard，节点 4 负责切换。
+- 2026-09-20 10:20：实现节点 3“Launcher”：新增 `main/framework/xiaomiao_launcher.{h,c}`（按 Registry 动态生成 2 列 × 2 行入口、页码由焦点索引推导、左右限本行且不循环、上下同列 ±2 可跨页、下键在右列越界回退到该行左侧入口、A 经 Navigation 打开、B 幂等返回、空 Registry 空状态、单一根对象承载全部子对象与 group 移除）与 `xiaomiao_launcher_selftest.{h,c}`（16 个静态测试 App 描述、主流程注册 7 个，自动断言 + 15 步方向遍历与 3 轮 open/back 引导式按键路径，PASS 标记 `LAUNCHER_SELF_TEST: PASS`）、CMake option `XIAOMIAO_LAUNCHER_SELF_TEST` 与 `main/main.c` 四形态互斥入口。普通构建路径无行为变化，默认仍启动 15 页 Dashboard。编译、烧录与实机验证待人工执行。
+- 2026-09-20 10:07：创建节点 3“Launcher”施工文档，明确两列四项分页、Registry 动态入口、焦点移动、Navigation 进入／返回、空列表与边界行为、自测范围，以及节点 4 前保留普通 Dashboard 启动路径的过渡方案；同步修正 README 中 Navigation 状态。
 - 2026-09-20 09:54：完成节点 2“Navigation”：交付 `main/framework/xiaomiao_navigation.{h,c}`（按 ID 打开、统一返回、查询当前 App、获取内容根；Manager 唯一状态来源，内容根在 App `open` 回调前发布、`close` 回调后统一删除）、`xiaomiao_navigation_selftest.{h,c}`（自动断言 + 3 轮 A/B 实机按键路径，PASS 标记 `NAVIGATION_SELF_TEST: PASS`）、CMake option `XIAOMIAO_NAVIGATION_SELF_TEST` 与 `main/main.c` 三形态互斥入口。三次失败均已定位修复（app_main 作用域→互斥结构；ccache 裸名 launcher→PATH 含 ccache；open 回调根对象缺失→s_app_root 提前赋值）。自测固件 `xiaomiao.bin` 0x83a10（49% free）实机 PASS，普通构建 15 页 Dashboard 回归通过。
 - 2026-09-20 08:33：实现节点 2“Navigation”代码与自测：新增 `main/framework/xiaomiao_navigation.h/.c`（按 ID 打开、统一返回、查询当前 App、获取内容根；Manager 仍为当前 App 唯一状态来源，App `close` 后由 Navigation 统一删除内容根）、`xiaomiao_navigation_selftest.h/.c`（错误路径与多轮 open/back 自动断言 + 3 轮 A 进入／B 返回／B 幂等实机按键路径，PASS 标记 `NAVIGATION_SELF_TEST: PASS`）、CMake option `XIAOMIAO_NAVIGATION_SELF_TEST` 及 `main/main.c` 最小自测入口。普通构建路径无行为变化。编译、烧录与实机验证待人工执行。
 - 2026-09-20 08:18：更新项目验证分工：ESP-IDF 编译、`set-target`、烧录、串口监视和目标板操作统一由人工执行；Agent 只提供命令、执行静态检查并复核人工证据。节点 2 Goal 已同步该要求。
@@ -71,6 +74,12 @@
 
 ## 最近验证
 
+- 2026-09-20 10:47（节点 3 最终验收）：复核 Launcher 运行时、自测源码、CMake 接入、普通启动分支、Goal 验收项与人工验证记录，未发现阻塞缺陷；`git diff --check` 通过，确认改动范围不含 `dependencies.lock`、GD32、硬件协议、引脚或依赖版本。按项目分工未重复执行编译、烧录、串口监视或目标板操作。
+- 2026-09-20 10:43（节点 3 普通构建回归与视觉确认，人工执行、Agent 复核）：普通构建（默认分支，不含任何自测宏）经人工编译与烧录成功，串口输出 `Xiaomiao LVGL 9.5 dashboard boot` 与 `Start Xiaomiao hardware dashboard`（非 `Launcher self test build`），未出现新增错误；人工确认按键操作正常，15 页 Dashboard 行为与节点 2 基线一致。自测固件运行期间人工目视确认：2 列 × 2 行布局正确、焦点项蓝底 + 白框与未选中卡片区分明显、`Long Application` 以省略号截断不遮挡相邻卡片、页码在 `1/2` 与 `2/2` 间切换。节点 3 全部验收条款满足，标记完成；普通固件默认入口仍为 Dashboard。
+- 2026-09-20 10:40（节点 3 自测固件实机验证，人工执行、Agent 复核）：`.tmp/build-launcher-selftest/`（`XIAOMIAO_LAUNCHER_SELF_TEST=ON`）经人工编译 exit=0，`xiaomiao.bin` 0x88580 字节（应用分区 0x100000 剩余 47%）。烧录后串口证据完整：8 个数量边界 `launcher created (0/1/2/3/4/5/7/16 apps)`、Manager 未初始化时 `open 'self.app0' failed: ESP_ERR_INVALID_STATE (0x103)`、App 打开期间 `destroy refused: an App is open`（两轮 open/back 各一次）、`automatic checks passed, guided key path: 15 steps + 3 rounds`；随后实机按键完成 `guided traversal done`（15 步方向遍历）、`round 1/3 → 2/3 → 3/3 done`（每轮 A 打开 / B 返回 / B 幂等），最终输出唯一标记 `LAUNCHER_SELF_TEST: PASS`。剩余：普通构建与 15 页 Dashboard 回归。
+- 2026-09-20 10:40（节点 3 自测构建与首轮编译修复）：自测形态经人工执行 ESP-IDF 6.1 `set-target esp32` 与 `build` 均 exit=0。首轮编译在 `xiaomiao_launcher_selftest.c` 失败，根因为 `XM_TEST_APP_ENTRY` 宏参数名 `id/name/icon` 与结构体字段名重名，预处理把 `.id/.name/.icon` 中的标识符一并替换；重命名宏参数为 `app_id/app_name/app_icon` 后编译通过。其余新增文件首轮即通过编译。
+- 2026-09-20 10:20（节点 3 静态检查）：`git diff --check` 通过（仅 README/ROADMAP 的 CRLF 提示）。逐文件核对改动落在 Goal 允许范围（新增 4 个 `main/framework/xiaomiao_launcher*` 文件、`main/CMakeLists.txt`、`main/main.c` 互斥入口、文档）；普通构建分支未改动，未修改 Dashboard、GD32、BSP、Service、硬件协议、引脚、依赖版本或 `dependencies.lock`；对照 LVGL 9.5 组件头文件确认所用 API 存在。未执行编译、烧录、串口监视或目标板操作，编译与实机验证标记为未验证。
+- 2026-09-20 10:07（节点 3 施工文档复核）：对照设计文档、节点 1 Registry、节点 2 Navigation 和当前 Dashboard 启动链，确认节点 3 只实现 Launcher 本体、动态入口、焦点与分页，不提前迁移 Hardware Test App 或开发正式业务 App；编译、烧录和实机操作继续归人工执行。
 - 2026-09-20 10:00（节点 2 主 Agent 最终验收）：逐项核对 Goal、Navigation 与自测源码、CMake 接入、普通启动分支和人工验证记录，未发现阻塞缺陷；确认未修改 `dependencies.lock`、GD32、硬件协议、引脚或依赖版本。仅执行静态检查，未重复编译、烧录、串口监视或目标板操作。
 - 2026-09-20 09:54（节点 2 普通构建回归，人工执行、Agent 复核）：普通构建（不含 `XIAOMIAO_NAVIGATION_SELF_TEST`）通过 ESP-IDF 6.1 编译；烧录普通固件后 15 页 Hardware Dashboard 启动、左右翻页、A 执行动作与 B 停止／取消行为与节点 1 基线一致，无新增错误。节点 2 全部验收条款满足，标记完成。
 - 2026-09-20 09:43（节点 2 自测固件实机验证，人工执行、Agent 复核）：修复 open 回调根对象缺失 bug 后重构建烧录，串口证据完整：`automatic checks passed`（覆盖未初始化/空 ID/未知 ID/打开冲突/NOT_FOUND 无泄漏/两轮自动 open/back 与对象基线恢复）+ 3 轮实机按键路径（每轮 `test App opened` → `test App closed` → 幂等检查）+ 最终 `NAVIGATION_SELF_TEST: PASS`。Goal 检查点 1～3 与自测相关验收条款全部满足。剩余：普通构建回归。

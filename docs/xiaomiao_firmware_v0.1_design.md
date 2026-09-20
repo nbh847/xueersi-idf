@@ -495,6 +495,8 @@ Launcher
 
 版本边界：v0.1 形成 Launcher、App Framework 和 Hardware Test；v0.2 完成持久化设置与 Wi-Fi；v0.3 打通 PC Monitor 数据；v0.4 加入 Audio 和首个游戏；v0.5 完成 SD、Assets 与文件系统。
 
+节点拆分补充：节点 3 先交付 Launcher 运行时代码，普通固件默认入口保持不变；把默认入口切换为 Launcher 放到节点 4 与 Hardware Test App 一起完成，避免节点 3 与节点 4 之间出现现有 Dashboard 不可达的中间状态。v0.1“开机默认进入 Launcher”的验收要求不变。
+
 ------------------------------------------------------------------------
 
 ## 核心设计原则

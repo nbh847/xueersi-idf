@@ -1,9 +1,11 @@
 option(XIAOMIAO_FRAMEWORK_SELF_TEST "Compile the App Framework runtime self test" OFF)
 option(XIAOMIAO_NAVIGATION_SELF_TEST "Compile the Navigation runtime self test" OFF)
+option(XIAOMIAO_LAUNCHER_SELF_TEST "Compile the Launcher runtime self test" OFF)
 
 set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
                    "framework/xiaomiao_app_manager.c"
-                   "framework/xiaomiao_navigation.c")
+                   "framework/xiaomiao_navigation.c"
+                   "framework/xiaomiao_launcher.c")
 
 if(XIAOMIAO_FRAMEWORK_SELF_TEST)
     list(APPEND FRAMEWORK_SRCS "framework/xiaomiao_framework_selftest.c")
@@ -11,6 +13,10 @@ endif()
 
 if(XIAOMIAO_NAVIGATION_SELF_TEST)
     list(APPEND FRAMEWORK_SRCS "framework/xiaomiao_navigation_selftest.c")
+endif()
+
+if(XIAOMIAO_LAUNCHER_SELF_TEST)
+    list(APPEND FRAMEWORK_SRCS "framework/xiaomiao_launcher_selftest.c")
 endif()
 
 idf_component_register(SRCS "main.c" ${FRAMEWORK_SRCS}
@@ -36,6 +42,10 @@ endif()
 
 if(XIAOMIAO_NAVIGATION_SELF_TEST)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE XIAOMIAO_NAVIGATION_SELF_TEST=1)
+endif()
+
+if(XIAOMIAO_LAUNCHER_SELF_TEST)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE XIAOMIAO_LAUNCHER_SELF_TEST=1)
 endif()
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE m)
