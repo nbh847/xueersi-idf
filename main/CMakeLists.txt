@@ -11,7 +11,8 @@ set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
 # register these descriptions (goal node 5, decision 14).
 set(APP_SRCS "apps/games/xiaomiao_games.c"
              "apps/pc_monitor/xiaomiao_pc_monitor.c"
-             "apps/tools/xiaomiao_tools.c")
+             "apps/tools/xiaomiao_tools.c"
+             "apps/settings/xiaomiao_settings.c")
 
 if(XIAOMIAO_FRAMEWORK_SELF_TEST)
     list(APPEND FRAMEWORK_SRCS "framework/xiaomiao_framework_selftest.c")

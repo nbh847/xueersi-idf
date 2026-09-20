@@ -16,7 +16,7 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools` 与 `Hardware Test` 四个入口，恰好占满第 1 页的 2 列 × 2 行网格。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是位于 `main/apps/games/` 的占位 App，按 A 进入、短按 B 返回；`PC Monitor` 是位于 `main/apps/pc_monitor/` 的静态骨架 App，显示 CPU／RAM／GPU／TEMP 四项无数据占位 `--`，按 A 进入、短按 B 返回，真实 PC 数据待后续通信节点接入；`Tools` 是位于 `main/apps/tools/` 的菜单 App，提供 Wi-Fi、System Info、About 三项，System Info 读取真实只读系统信息，Wi-Fi 在 Wi-Fi Service 实现前如实显示不可用，详情页短按 B 返回菜单、菜单页短按 B 返回 Launcher。App Framework 核心运行时、Navigation 与 Launcher 均在 `main/framework/` 实现。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是位于 `main/apps/games/` 的占位 App，按 A 进入、短按 B 返回；`PC Monitor` 是位于 `main/apps/pc_monitor/` 的静态骨架 App，显示 CPU／RAM／GPU／TEMP 四项无数据占位 `--`，按 A 进入、短按 B 返回，真实 PC 数据待后续通信节点接入；`Tools` 是位于 `main/apps/tools/` 的菜单 App，提供 Wi-Fi、System Info、About 三项，System Info 读取真实只读系统信息，Wi-Fi 在 Wi-Fi Service 实现前如实显示不可用，详情页短按 B 返回菜单、菜单页短按 B 返回 Launcher；`Settings` 是位于 `main/apps/settings/` 的设置骨架 App，提供 Wi-Fi、Display、Sound、System 四项与只读能力状态页（均如实标注需要后续节点的 Service 或后端），与 Tools 同样是详情页短按 B 返回菜单、菜单页短按 B 返回 Launcher。App Framework 核心运行时、Navigation 与 Launcher 均在 `main/framework/` 实现。
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，三重缓冲，稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。

@@ -3,7 +3,7 @@
 > 基于 `xueersi-idf` / ESP-IDF / LVGL 的可扩展掌机固件架构\
 > 目标平台：学而思小喵掌机（ESP32）
 
-> 状态说明：本文是目标架构与验收方案，不是当前实现说明。截至 2026-09-19，仓库仍运行 `main/main.c` 中的 15 页 Hardware Dashboard，Launcher、App Framework、Service 与 BSP 分层尚未落地。当前进度以根目录 `ROADMAP.md` 为准。
+> 状态说明：本文是目标架构与验收方案，不是当前实现说明。App Framework、Navigation 与 Launcher 已落地，15 页 Hardware Dashboard 已注册为 `Hardware Test` App，Service 与 BSP 分层尚未落地；各节点实现与验证进度一律以根目录 `ROADMAP.md` 为准，本文不重复维护该状态。
 
 ## 1. v0.1 目标
 
