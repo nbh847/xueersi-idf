@@ -49,6 +49,7 @@
 #include "framework/xiaomiao_launcher_selftest.h"
 #endif
 
+#include "apps/games/xiaomiao_games.h"
 #include "framework/xiaomiao_app.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
@@ -2411,17 +2412,41 @@ static lv_group_t *lvgl_input_init(lv_display_t *display)
 }
 
 /*
- * Normal firmware startup chain (goal node 4, checkpoint 1): register the
- * official Apps, initialize the App Manager and show the Launcher. Each stage
- * reports its own error and stops there instead of falling back to a directly
+ * Register one App, reporting the App id with its own error code. The
+ * caller stops the boot chain on the first failure instead of starting
+ * with a partial App list.
+ */
+static esp_err_t launcher_register_app(const xiaomiao_app_t *app)
+{
+    if (app == NULL) {
+        ESP_LOGE(TAG, "App description is missing");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = xiaomiao_app_registry_register(app);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register '%s' failed: %s (0x%x)", app->id,
+                 esp_err_to_name(err), (unsigned)err);
+    }
+    return err;
+}
+
+/*
+ * Normal firmware startup chain (goal node 4, checkpoint 1; goal node 5,
+ * decision 4): register the official Apps in Launcher entry order, then
+ * initialize the App Manager and show the Launcher. Each stage reports
+ * its own error and stops there instead of falling back to a directly
  * built dashboard.
  */
 static esp_err_t launcher_boot(lv_group_t *group)
 {
-    esp_err_t err = xiaomiao_app_registry_register(&s_hardware_test_app);
+    esp_err_t err = launcher_register_app(xiaomiao_games_app());
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "register '%s' failed: %s (0x%x)",
-                 HARDWARE_TEST_APP_ID, esp_err_to_name(err), (unsigned)err);
+        return err;
+    }
+
+    err = launcher_register_app(&s_hardware_test_app);
+    if (err != ESP_OK) {
         return err;
     }
 

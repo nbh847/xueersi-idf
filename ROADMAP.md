@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-- ESP32 固件基于 ESP-IDF 6.1 与 LVGL 9.5，当前入口为 `main/main.c` 的单文件 Hardware Dashboard。
+- ESP32 固件基于 ESP-IDF 6.1 与 LVGL 9.5，普通固件开机默认进入 `main/framework/` 的 Launcher；Launcher 按注册顺序显示 `Games`（`main/apps/games/` 占位 App）与 `Hardware Test`（`main/main.c` 中的 15 页 Hardware Dashboard）两个入口。
 - Dashboard 已覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统和 About。
 - ESP32 端已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。
 - GD32 工程当前只确认实现 USB CDC、USART1 桥和 ESP32 IO0/EN 控制；I2C `0x40` LED/电机从机协议未在仓库源码中实现。
-- Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，Navigation 统一进入／返回与内容根对象所有权已于节点 2 实现，Launcher 两列首页、焦点与分页已于节点 3 实现，均位于 `main/framework/`；节点 4 已把 15 页 Dashboard 注册为 `Hardware Test` App 并把普通固件默认入口切换为 Launcher，可执行的启动、生命周期、输入和 15 页人工测试均已通过。
+- Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，Navigation 统一进入／返回与内容根对象所有权已于节点 2 实现，Launcher 两列首页、焦点与分页已于节点 3 实现，均位于 `main/framework/`；节点 4 已把 15 页 Dashboard 注册为 `Hardware Test` App 并把普通固件默认入口切换为 Launcher，可执行的启动、生命周期、输入和 15 页人工测试均已通过；节点 5 新增首个独立业务目录 `main/apps/games/`（`Games` 占位 App），普通固件按 Games → Hardware Test 顺序注册两个入口，双入口顺序、双 App 焦点保持、多轮生命周期和 Hardware Test 回归均已实机验证通过。
 
 ## 当前开发节点
 
@@ -17,6 +17,7 @@
 - 节点 2“Navigation”已完成（2026-09-20，导航运行时 + 自测 + 自测固件实机 PASS + 普通构建 15 页 Dashboard 回归全部通过）。施工文档为 `goals/20260920-0816-navigation.md`。
 - 节点 3“Launcher”已完成（2026-09-20，运行时代码 + 自测代码 + 自测构建实机 `LAUNCHER_SELF_TEST: PASS` + 普通构建 15 页 Dashboard 回归与视觉三项确认全部通过）。本节点先通过专用自测构建验收动态入口、焦点和分页，普通固件继续启动 Dashboard，节点 4 接入 Hardware Test App 后再切换默认启动。施工文档为 `goals/20260920-1007-launcher.md`。
 - 节点 4“Hardware Test App”已完成（2026-09-20）。普通固件默认进入 Launcher，15 页 Dashboard 注册为 `Hardware Test` App，B 手势判定通道固定为 `keypad_read_cb()` 边沿加独立状态机（对象级事件回调通道经核对不可行）。实机验证：检查点 1（11:20）；生命周期 16 轮／连续 11 轮且 `screen children` 恒为 2、B 短按与长按、15 页可达、MicroSD 缺失路径（11:43）。唯一未验证条款为“从电机或蜂鸣器运行状态退出时先停止持续输出”，因本机无电机硬件、GD32 无 `0x40` 从机实现、蜂鸣器仅鸣叫 140 ms 而无法构造，按本 Goal 失败路径条款标记未验证且不阻塞；**LED、电机、MPU6050 的实机行为仍无证据，不得视为外设回归已通过**。施工文档为 `goals/20260920-1053-hardware-test-app.md`。
+- 节点 5“Games 占位 App”已完成（2026-09-20）。新增 `main/apps/games/xiaomiao_games.{h,c}`（首个独立业务目录）、`main/CMakeLists.txt` 源文件与 `INCLUDE_DIRS "."`、`main/main.c` 的 `launcher_register_app()` 与 Games → Hardware Test 注册顺序。实机验证：`launcher created (2 apps)`；Games 10 轮与 Hardware Test 4 轮 open/close 严格配对，`screen children=2` 在全部 28 条日志上恒定，无 panic／重启；Games 短按 B 返回（后 8 轮均 <1 s），Hardware Test 4 次返回全部 `launcher focus=1 page=0`（节点 4 单 App 阶段无法证明的焦点保持首次取得数值证据）；两种 B 语义互不干扰，15 页无回归。**两处数量口径差异**：条款要求“一次不中断连续 10 轮”与“至少 5 轮双 App 交替”，实测为 10 轮 Games（最长连续段 4 轮）与 4 轮 Hardware Test，经人工确认按现有证据接受，原文记录于 Goal。施工文档为 `goals/20260920-1159-games-placeholder.md`。
 - GD32 实机固件与 README 中 `0x40` 协议的对应关系仍在待确认状态，不阻塞不依赖 LED、电机的 v0.1 框架开发。
 
 ## 有序开发节点
@@ -28,7 +29,7 @@
 - [x] 节点 2：Navigation。
 - [x] 节点 3：Launcher。
 - [x] 节点 4：Hardware Test App。
-- [ ] 节点 5：Games 占位 App。
+- [x] 节点 5：Games 占位 App。
 - [ ] 节点 6：PC Monitor UI。
 - [ ] 节点 7：Tools App。
 - [ ] 节点 8：Settings UI。
@@ -43,21 +44,25 @@
 
 ## 下一步
 
-1. 实施节点 5“Games 占位 App”：提供可进入、可返回的占位页面，不创建独立 FreeRTOS Task。该节点会让 Launcher 出现 2 个 App，届时 `launcher focus=／page=` 日志才具备证明力，可顺带复核节点 4 遗留的“返回后焦点与页码与进入前一致”。
+1. 实施节点 6“PC Monitor UI”：按 `docs/xiaomiao_firmware_v0.1_design.md` 第 15 节定义施工文档后再动手；节点 5 已确立业务 App 应放 `main/apps/<app>/`、经 `xiaomiao_app_t` 静态描述注册、不感知硬件与 Launcher 的既有范式，新 App 直接沿用。
 2. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
 3. 可选补录（不影响节点 4 结论）：缺失设备页面的实际显示文本（GD32 `0x40` 的 LED／电机页、MPU6050 的运动页），以及挂载失败后重新进入 App 的行为。
-4. 按需另立任务定位 SD／GPIO22 配置冲突（`docs/xiaomiao_firmware_v0.1_design.md` 第 9 节已预告，不属节点 4）。
-5. 已实现的节点 4 约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行；`ui_key_event_cb()` 中原有的 `LV_KEY_ESC` 立即分支已移除，B 只有一个决策点；`lv_indev_set_long_press_time()` 全局设置未改（方向键按住重复依赖它）。Launcher 在“App 打开”状态下转发 B 的分支经复核为不可达（Dashboard 输入对象取得焦点后 Launcher 不再接收按键），属预期行为，未修改 `main/framework/` 下节点 1～3 文件。
+4. 可选补录（不影响节点 5 结论）：条款“一次不中断连续 10 轮 Games 进入／返回”与“至少 5 轮双 App 交替”未取得满足口径的样本（实测 10 轮 Games 最长连续段 4 轮、Hardware Test 4 轮），经人工确认按现有证据接受；如需补齐，固件已在板上，重新 `idf.py -p COM5 monitor` 后补按若干轮即可，无需重新编译或烧录。
+5. 按需另立任务定位 SD／GPIO22 配置冲突（`docs/xiaomiao_firmware_v0.1_design.md` 第 9 节已预告，不属节点 4）。
+6. 已实现的节点 4／5 约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行；`ui_key_event_cb()` 中原有的 `LV_KEY_ESC` 立即分支已移除，B 只有一个决策点；`lv_indev_set_long_press_time()` 全局设置未改（方向键按住重复依赖它）。Launcher 在“App 打开”状态下转发 B 的分支只在 App 未取得输入焦点时可达：Hardware Test 会把输入对象加入 group，该分支对它不可达（属预期，节点 4 已记录）；Games 不加入 group，该分支对它可达，并已在节点 5 实机验证（短按 B 即返回）。未修改 `main/framework/` 下节点 1～3 文件。
 
 ## 待确认与已知风险
 
 - `docs/xiaomiao_firmware_v0.1_design.md` 第 9 节记录的 `sdmmc_card_init failed` 与 `gpio: conflict found for GPIO[22]` 已于 2026-09-20 实机复现两次（11:32 按 A 三次失败三次、11:43 按 A 两次失败两次，`PIN_NUM_SD_CS = GPIO_NUM_22`）。两次均未阻塞启动、进入与返回，符合设计文档“失败则 SD_UNAVAILABLE、记录日志、继续启动 Launcher”的既定策略；但配置 SD 卡时的具体冲突机制尚未定位（第二次及后续尝试在挂载前即报 GPIO22 冲突，提示 CS 引脚未被上一次失败释放），需另立任务，不属节点 4 范围。
 - README 记录的 GD32 LED/电机协议已被 ESP32 代码使用，但当前 GD32 工程缺少对应实现，双 MCU 联调结果待确认。
 - 本机 ESP-IDF 安装为非默认布局：Python venv 3.14.7 位于 `<IDF_TOOLS_PATH>/tools/python/v6.1/venv`（不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH` 后再运行官方 `export.ps1`；constraints 文件曾错位于工具目录的 `tools/` 子目录，2026-09-19 经授权复制到工具目录根修复（原文件保留）。MSYS/Git Bash 中执行 export 会因 `MSYSTEM` 变量被拒绝。PATH 中的 `idf.py.exe`（idf-exe 1.0.3 包装器）`--version` 显示包装器自身版本，确认 IDF 版本需用 `python "$env:IDF_PATH\tools\idf.py" --version`。
-- 节点 0～4 的可执行人工验证均已完成；LED、电机、MPU6050 的真实设备行为仍需相应硬件与 GD32 `0x40` 协议配合验证，MicroSD 缺失路径已覆盖。
+- 节点 0～5 的可执行人工验证均已完成；LED、电机、MPU6050 的真实设备行为仍需相应硬件与 GD32 `0x40` 协议配合验证，MicroSD 缺失路径已覆盖。
 
 ## 最近完成
 
+- 2026-09-20 12:29：完成节点 5“Games 占位 App”，标记为已完成。人工完成 ESP-IDF 6.1 普通构建、烧录与 Monitor 并确认视觉与按键路径正常；日志复核通过启动注册 2 个 App、Games 10 轮与 Hardware Test 4 轮 open/close 严格配对、`screen children=2` 在全部 28 条日志上恒定、Hardware Test 4 次返回全部 `launcher focus=1 page=0`（节点 4 无法证明的焦点保持首次取得数值证据）、Games 后 8 轮返回耗时均 <1 s（短按 B 生效）与 Hardware Test 每轮 >1.9 s（长按生效）并存不干扰。两处数量口径差异（缺“一次不中断连续 10 轮”与“第 5 轮双 App 交替”，实测为最长 4 轮连续段与 4 轮 HT）经人工确认按现有证据接受，原文与推理保留在 Goal 的“验证结果”。同步更新 `ROADMAP.md`、`docs/project-overview.md`；`AGENTS.md` 的目录职责描述已随 `main/apps/` 的建立做最小事实订正。
+- 2026-09-20 12:15：实现节点 5“Games 占位 App”代码。新增首个独立业务目录 `main/apps/games/`：`xiaomiao_games.h` 只暴露 `const xiaomiao_app_t *xiaomiao_games_app(void)`，`xiaomiao_games.c` 内定义固件全生命周期有效的 `static const` 描述（`id=games`、`name=Games`、`icon=LV_SYMBOL_PLAY`、`init=NULL`），`open` 只在 `xiaomiao_navigation_app_root()` 下创建占位容器与 `Games`／`Coming soon`／`B Back` 三个标签，`close` 只清空容器引用交给 Navigation 删除内容根。`main/CMakeLists.txt` 新增 `APP_SRCS` 并把 `INCLUDE_DIRS ""` 改为 `"."`（原值为空，导致 `main/` 自身不在 include 路径上，`apps/games/` 无法按 `framework/...` 引用框架头文件）；`main/main.c` 新增 `launcher_register_app()` 并改为按 Games → Hardware Test 顺序注册两个 App。未修改 `main/framework/`、Dashboard 15 页、GD32、硬件协议、引脚、依赖版本或 `dependencies.lock`。编译、烧录与实机验证尚未执行。
+- 2026-09-20 11:59：修正路线图中“普通固件仍以单文件 Dashboard 为入口”的过期表述，并创建节点 5“Games 占位 App”施工文档；明确独立业务目录、静态描述接口、Games → Hardware Test 注册顺序、占位 UI、Launcher B 返回分支、双 App 焦点保持、多轮生命周期和 Hardware Test 回归标准。尚未修改固件源码或执行人工构建与实机验证。
 - 2026-09-20 11:46：完成节点 4“Hardware Test App”，标记为已完成。人工确认蜂鸣器实际发声正常、本机无电机硬件，据此查明验收条款“从电机或蜂鸣器运行状态退出时先停止持续输出”在当前硬件上无法构造：电机侧 `s_board.motor_running[]` 只在 `gd32_motor_set()` 返回 `ESP_OK` 时置真，无电机且 GD32 无 `0x40` 从机实现故从未为真，`hardware_test_close()` 的停止循环被 `continue` 跳过；蜂鸣器侧 A 键仅鸣叫 140 ms（`buzzer_beep(s_buzzer_freq_hz, 140)`，`main/main.c:2065`）后自动停止，不存在“仍在发声”时按 B 的时刻，单键模型下也无法同时按住 A 与 B。该条款按本 Goal 失败路径条款标记未验证且不阻塞；同时明确 LED、电机、MPU6050 的实机行为仍无证据，不得视为外设回归已通过。同步更新 `ROADMAP.md` 与 Goal。
 - 2026-09-20 11:32：为节点 4 检查点 2 补充可观测日志。原实现没有任何输出可用于核对“screen 子对象数量保持基线”，该验收条款实际不可测量，因此在 `hardware_test_open()` 末尾输出活动 screen 的子对象数量、在 `hardware_test_close()` 末尾输出同一数值以及 `xiaomiao_launcher_focused_index()`／`xiaomiao_launcher_page_index()`。前者用于发现内容根泄漏（应恒为 Launcher 根 + 新 App 内容根），后者作为“返回后与进入前一致”的证据。仅新增日志，未改变任何控制流与功能。
 - 2026-09-20 11:18：实现节点 4“Hardware Test App”代码。`main/main.c` 新增 `Hardware Test` App 描述（`id=hardware_test`、`name=Hardware Test`、`icon=LV_SYMBOL_SETTINGS`，`init` 为空，硬件仍在 `app_main` 初始化一次）与 `hardware_test_open/close/is_open`；`ui_create()` 改为接收 Navigation 内容根作为父对象，不再使用 `lv_screen_active()`；`close` 先取消 B 手势、停蜂鸣器与两路电机（失败记录错误码但不阻塞），再从 group 移除输入对象并清空全部 `s_ui` 引用。B 键改为 `keypad_read_cb()` 边沿驱动的独立状态机（800 ms 长按、300 ms 后复用 `set_action()` 显示 `Hold to exit` 提示），动作在 LVGL 循环执行；`ui_key_event_cb()` 中立即执行 `ui_cancel()` 的 `LV_KEY_ESC` 分支已移除。`lvgl_task()` 改为注册 App、`init_all()`、创建 Launcher，任一步失败记录阶段与错误码且不回退到 Dashboard；`hardware_update()`／`ui_refresh()` 仅在 Hardware Test 打开时执行，`hardware_process_timers()` 保持常驻。启动日志改为 `Xiaomiao LVGL 9.5 launcher boot` 与 `Start Xiaomiao launcher`。未修改 `main/framework/`、GD32、硬件协议、引脚、依赖版本或 `dependencies.lock`。
@@ -75,12 +80,12 @@
 - 2026-09-19 20:50：将 `dependencies.lock` 独立同步到项目的 ESP-IDF 6.1 基线（IDF 6.1.0、锁文件格式 3.0.0）；LVGL 仍为 9.5.0，`manifest_hash` 未变化。
 - 2026-09-19 20:37：创建节点 1“App Framework”施工文档，明确框架接口、静态 Registry、生命周期 Manager、自测方式、范围边界和验收标准；尚未启动执行。
 - 2026-09-19 20:35：完成节点 0 补充实机验证，固件可正常烧录和启动，15 个 Dashboard 页面均可翻页，A/B 键操作正常；未将未测试外设标记为已验证。
-- 2026-09-19 20:23：修正节点 0 Goal 与路线图中的机器绝对路径表述，改用环境变量占位符；保留 `.tmp/` 中的本机诊断证据。
-- 2026-09-19 19:52：完成节点 0“构建基线恢复”：定位环境错配根因（`IDF_TOOLS_PATH` 未设置、venv 非默认布局、`MSYSTEM` 泄漏、constraints 文件错位），以进程级环境变量修复并经授权复制 constraints 文件到工具目录根；在 `.tmp/build-baseline/` 完成全新配置构建与二次构建验证；构建入口与环境要求写入 `AGENTS.md` 与 `docs/project-overview.md`。
-- 2026-09-19 18:34：创建节点 0 的 Goal 施工文档，明确目标、边界、检查点、失败路径、验收标准和交付内容。
 
 ## 最近验证
 
+- 2026-09-20 12:29（节点 5 实机验证，人工执行、Agent 复核）-- 通过（含两处数量口径差异，人工确认接受）：人工完成 ESP-IDF 6.1 普通构建、烧录与 Monitor，提供自启动至运行 173 s 的完整串口日志，并确认双入口布局、Games 三段文本、Games 内方向键与 A 无反应、短按 B 返回、Hardware Test 短按／长按 B 与 15 页回归“都没问题”。日志复核要点：启动链输出 `launcher: launcher created (2 apps)` 与 `Launcher ready, 2 app(s) registered`，全程无 self-test 标记、无旧 dashboard 启动行；每轮 `games opened`／`hardware test opened` 均先于 `launcher: opened '<id>'`，与 Navigation「先发布内容根 → 跑 open 回调 → Manager 发布 current」的实现顺序一致；Games 10 轮与 Hardware Test 4 轮 open/close 严格配对（无孤立 open、无重复 close）；**`screen children=2` 在全部 28 条 open／close 日志上恒定**，证明每次关闭后内容根完整释放；启动 banner 仅一次、时间戳 803 ms→173147 ms 单调递增，无 panic／看门狗／重启循环／输入失效；Games 每轮耗时 3.35/1.90/0.78/0.42/0.49/0.70/0.58/0.61/0.61/0.53 s（后 8 轮 <1 s，证明短按 B 即可返回，走 Launcher 的 App 打开态 B 转发分支），Hardware Test 每轮 3.60/3.47/2.95/1.91 s（全部超过 800 ms 阈值），两套 B 语义在同一会话内并存且互不干扰；Hardware Test 4 次 `close` 全部输出 `launcher focus=1 page=0`，**首次为节点 4 无法证明的焦点保持取得数值证据**。**数量口径差异**：验收条款要求“连续 10 轮 Games 进入／返回及至少 5 轮双 App 交替”，实测为 10 轮 Games（最长不中断连续段 4 轮）与 4 轮 Hardware Test，两个数量口径未满足；经提出后人工明确选择按现有证据接受，理由为条款实质目的（open／close 成对、`screen children` 稳定、无崩溃与输入失效）已在 14 次应用往返中完整覆盖，差异属计数口径而非功能或对象生命周期缺陷。本轮未进入 MicroSD 页，未复现 SD／GPIO22 冲突。
+- 2026-09-20 12:15（节点 5 实现后静态检查）：`git diff --check` 通过（仅 ROADMAP 的 CRLF 提示），大括号配平（`xiaomiao_games.c` 9/9、`xiaomiao_games.h` 1/1、`main/main.c` 350/350）。逐项核对改动只落在新增 `main/apps/games/` 两个文件与 `main/CMakeLists.txt`、`main/main.c`、文档：未修改 `main/framework/` 下节点 1～3 文件、Dashboard 15 页内容与 B 状态机、GD32、硬件协议、引脚、依赖版本或 `dependencies.lock`。`xiaomiao_games.c` 内无 `lv_group`／`lv_obj_add_event_cb`／`xTaskCreate`／`esp_timer`／`vTaskDelay`／队列锁／`gpio_`／`i2c_`／`spi_`／`adc_`／`ledc_`／`nvs_`／`sdspi`／`fopen`／`lv_obj_delete`，仅两处只读 `lv_obj_get_child_count(lv_screen_active())` 用于决策 12 的生命周期日志；未创建或切换 screen，未加入 group。核对本仓库锁定的 LVGL 9.5 头文件确认所用 API 与 `lv_font_montserrat_10/12/14`、`LV_SYMBOL_PLAY` 均存在（字体由 `sdkconfig.defaults` 的 `CONFIG_LV_FONT_MONTSERRAT_10/12/14=y` 启用）。发现并修正 1 项阻塞性缺口：`main/CMakeLists.txt` 原为 `INCLUDE_DIRS ""`，`main/` 自身不在 include 路径上（已从 `build/compile_commands.json` 核实无 `-I<main>`），游戏模块无法按 Goal 决策 2 写 `#include "framework/xiaomiao_app.h"`，故改为 `INCLUDE_DIRS "."`。按项目分工未执行编译、烧录、串口监视或目标板操作；本条执行时节点 5 运行时验收项全部为未验证，后续结果见 12:29 条目。
+- 2026-09-20 11:59（节点 5 施工文档复核）：对照路线图、项目概览、v0.1 设计文档、节点 1～4 Goal、App／Navigation 接口、Launcher App 打开态 B 转发分支和当前普通启动注册链，确认节点 5 只交付可进入／返回的 Games 占位页，不实现真实游戏、不创建独立 Task、不接触硬件；固件源码、编译、烧录、串口和实机行为均未验证。
 - 2026-09-20 11:46（节点 4 收口判定，人工确认、Agent 复核）：人工确认蜂鸣器实际发声正常、本机无电机硬件。据此判定“从电机或蜂鸣器运行状态退出时先停止持续输出”在当前硬件上不可构造：电机侧 `s_board.motor_running[]` 仅在 `gd32_motor_set()` 返回 `ESP_OK` 时置真（`ui_motor_toggle()`），无电机且 GD32 未实现 I2C `0x40` 从机协议，该标志从未为真，`hardware_test_close()` 的 `if (!s_board.motor_running[motor]) continue;` 跳过停止命令；蜂鸣器侧 A 键调用 `buzzer_beep(s_buzzer_freq_hz, 140)`（`main/main.c:2065`），140 ms 后由 `s_buzzer_stop_at` 在 `hardware_process_timers()` 中自动停止，不存在“仍在发声”时按 B 的时刻，且 `keypad_read_cb()` 为单键模型无法同时按住 A 与 B。`buzzer_stop()` 在每次 `close` 均被调用、代码路径已执行但无可观察效果。按本 Goal 失败路径条款（设备缺失只标记对应外设未验证、不阻塞）标记该条款未验证并收口节点 4；同时在 Goal 与路线图中明确 LED、电机、MPU6050 的实机行为仍无证据，不得视为外设回归已通过。
 - 2026-09-20 11:43（节点 4 最终生命周期轮转与人工确认，人工执行、Agent 复核）：同一 Monitor 会话内 16 轮 `hardware test opened`／`hardware test closed` 全部配对（16/16），其中**前 11 轮为一次不中断的快速轮转**（每轮 1.09～1.29 s），满足“连续至少 10 轮”。**`screen children=2` 在全部 16 次 open 与 16 次 close 上恒定**，无一次增长，证明 Navigation 每次都在关闭后完整释放 App 内容根、Dashboard 子对象无泄漏，也即“连续 10 轮后 screen 子对象保持基线”成立；16 轮无崩溃、无 panic、无重启循环、无输入失效。`launcher focus=0 page=0` 全程不变，但**该项本轮不具证明力**（普通固件只注册 1 个 App，焦点无处可移、只有 1 页，恒为 0/0），Launcher 状态保留只能靠行为观察。人工确认：返回 Launcher 后按各方向键只有 Launcher 侧反应、无任何 Dashboard 反应（证明焦点已交回、周期循环未触碰失效 UI）；B 短按逐页给出原有提示且均未退出；按住约 0.3 s 出现一次 `Hold to exit`、达 800 ms 返回、松开无补发、提示不重复；15 页全部可进入、翻页与操作。MicroSD 页 2 次挂载失败后 2.7 s 仍正常返回，既存 SD／GPIO22 问题再次复现。当时仍缺“电机／蜂鸣器运行状态下退出先停输出”，已在 11:46 定性。
 - 2026-09-20 11:32（节点 4 生命周期轮转与 MicroSD 缺失路径，人工执行、Agent 复核）：同一 Monitor 会话内 19 轮 `hardware test opened`／`hardware test closed` 严格配对，无孤立 open、无重复 close、无 panic、无重启循环；快速轮转段最长连续 6 轮（每轮 1.2～1.5 s），另有 4 轮与 3 轮连续段，长时段停留（35.8 s、25 s、15.4 s、16.2 s）后仍正常返回。`main/main.c` 中 `xiaomiao_navigation_back()` 只有第 1153 行一处调用（B 手势退出分支），`xiaomiao_launcher.c:253` 的 Launcher 转发分支在 Dashboard 持有焦点时不可达，因此 19 次返回全部由 B 长按手势触发且每次只产生一次关闭。第 19 轮内 MicroSD 页按 A 三次，3 次 `sdmmc_card_init failed (0x107)` 与 `gpio: conflict found for GPIO[22]`，1.7 s 后仍正常返回 Launcher——既未阻塞启动也未阻塞返回，符合设计文档第 9 节“SD 失败则 SD_UNAVAILABLE、记录日志、继续启动 Launcher”的既定策略；`sd_try_mount()` 只由 A 键的 `ui_action()` 调用（`main/main.c:2077`），不存在自动重试循环。该 SD／GPIO22 组合是设计文档已记录的既存问题（`PIN_NUM_SD_CS = GPIO_NUM_22`），本次为首次实机复现，不属节点 4 范围。当时仍缺 screen 子对象基线与 Launcher 焦点／页码（尚未补日志）、连续 10 轮、B 短按与提示目视确认、15 页与缺失设备回归。
@@ -98,6 +103,3 @@
 - 2026-09-20 09:54（节点 2 普通构建回归，人工执行、Agent 复核）：普通构建（不含 `XIAOMIAO_NAVIGATION_SELF_TEST`）通过 ESP-IDF 6.1 编译；烧录普通固件后 15 页 Hardware Dashboard 启动、左右翻页、A 执行动作与 B 停止／取消行为与节点 1 基线一致，无新增错误。节点 2 全部验收条款满足，标记完成。
 - 2026-09-20 09:43（节点 2 自测固件实机验证，人工执行、Agent 复核）：修复 open 回调根对象缺失 bug 后重构建烧录，串口证据完整：`automatic checks passed`（覆盖未初始化/空 ID/未知 ID/打开冲突/NOT_FOUND 无泄漏/两轮自动 open/back 与对象基线恢复）+ 3 轮实机按键路径（每轮 `test App opened` → `test App closed` → 幂等检查）+ 最终 `NAVIGATION_SELF_TEST: PASS`。Goal 检查点 1～3 与自测相关验收条款全部满足。剩余：普通构建回归。
 - 2026-09-20 09:23（节点 2 自测构建）：两轮失败后定位根因并完成自测固件构建。第一轮为 `app_main()` 变量重复定义（已按三形态互斥结构修复）；第二轮 ninja 静默 exit 2，经 idf.py 日志与 ninja 补跑定位为构建会话 PATH 缺 ccache（build.ninja launcher 写裸名 `ccache`，`CreateProcess failed`），非源码缺陷。PATH 补入 ccache 后补跑成功：`main.c` 仅 3 个预期内未使用函数警告，`xiaomiao.bin` 0x83a10 字节（应用分区 49% free），bootloader 与分区检查通过。烧录、`NAVIGATION_SELF_TEST: PASS` 实机路径与普通构建回归仍未验证。
-- 2026-09-20 08:33（节点 2 静态复核）：`git diff --check` 通过；逐文件核对改动仅覆盖 Goal 允许范围（新增 4 个 framework 文件、`main/CMakeLists.txt`、`main/main.c` 最小自测入口），普通构建路径行为不变；未修改 GD32、硬件协议、引脚、依赖版本或 `dependencies.lock`。编译、烧录与实机回归尚未执行，标记为未验证。
-- 2026-09-20 08:18（验证流程复核）：核对 `AGENTS.md` 与节点 2 Goal，确认编译、烧录、monitor 和实机交互均明确归属人工；Agent 的职责限定为命令准备、静态检查和证据复核，缺少人工结果时必须标记“未验证”。
-- 2026-09-20 08:16（节点 2 施工文档复核）：对照 v0.1 设计文档节点 2、节点 1 已交付接口和当前 Dashboard 启动链，确认范围未扩大到 Launcher、Hardware Test App、BSP、Service、GD32 或硬件迁移；验收覆盖 A 进入、B 返回、失败回滚、LVGL 对象完整释放和普通 Dashboard 回归。
