@@ -50,6 +50,7 @@
 #endif
 
 #include "apps/games/xiaomiao_games.h"
+#include "apps/pc_monitor/xiaomiao_pc_monitor.h"
 #include "framework/xiaomiao_app.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
@@ -2433,14 +2434,19 @@ static esp_err_t launcher_register_app(const xiaomiao_app_t *app)
 
 /*
  * Normal firmware startup chain (goal node 4, checkpoint 1; goal node 5,
- * decision 4): register the official Apps in Launcher entry order, then
- * initialize the App Manager and show the Launcher. Each stage reports
- * its own error and stops there instead of falling back to a directly
- * built dashboard.
+ * decision 4; goal node 6, decision 4): register the official Apps in
+ * Launcher entry order, then initialize the App Manager and show the
+ * Launcher. Each stage reports its own error and stops there instead of
+ * falling back to a directly built dashboard.
  */
 static esp_err_t launcher_boot(lv_group_t *group)
 {
     esp_err_t err = launcher_register_app(xiaomiao_games_app());
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = launcher_register_app(xiaomiao_pc_monitor_app());
     if (err != ESP_OK) {
         return err;
     }

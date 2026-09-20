@@ -16,7 +16,7 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games` 与 `Hardware Test` 两个入口。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是位于 `main/apps/games/` 的占位 App，按 A 进入、短按 B 返回。App Framework 核心运行时、Navigation 与 Launcher 均在 `main/framework/` 实现。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor` 与 `Hardware Test` 三个入口。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是位于 `main/apps/games/` 的占位 App，按 A 进入、短按 B 返回；`PC Monitor` 是位于 `main/apps/pc_monitor/` 的静态骨架 App，显示 CPU／RAM／GPU／TEMP 四项无数据占位 `--`，按 A 进入、短按 B 返回，真实 PC 数据待后续通信节点接入。App Framework 核心运行时、Navigation 与 Launcher 均在 `main/framework/` 实现。
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，三重缓冲，稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。

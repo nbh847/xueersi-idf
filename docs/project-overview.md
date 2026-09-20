@@ -6,21 +6,23 @@
 
 ## 当前实现
 
-ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。15 页 Dashboard 业务代码仍位于 `main/main.c`；App Framework 运行时（App 描述、Registry、Manager、Navigation、Launcher）位于 `main/framework/`；业务 App 位于 `main/apps/`，当前只有占位 `Games`（`main/apps/games/`）。普通固件已接入框架：开机进入 Launcher，按注册顺序显示 `Games` 与 `Hardware Test` 两个入口。当前启动链为：
+ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。15 页 Dashboard 业务代码仍位于 `main/main.c`；App Framework 运行时（App 描述、Registry、Manager、Navigation、Launcher）位于 `main/framework/`；业务 App 位于 `main/apps/`，当前有占位 `Games`（`main/apps/games/`）与静态骨架 `PC Monitor`（`main/apps/pc_monitor/`）。普通固件已接入框架：开机进入 Launcher，按注册顺序显示 `Games`、`PC Monitor` 与 `Hardware Test` 三个入口。当前启动链为：
 
 ```text
 app_main
   -> 按键、LCD、ADC、I2C、LEDC、SD 初始化
   -> LVGL 显示与 keypad 输入注册
   -> lvgl FreeRTOS 任务
-  -> Registry 按 Games、Hardware Test 顺序注册
+  -> Registry 按 Games、PC Monitor、Hardware Test 顺序注册
   -> App Manager init_all
-  -> Launcher（按 A 打开焦点 App，Games 短按 B 返回、Hardware Test 长按 B 800 ms 返回）
+  -> Launcher（按 A 打开焦点 App，Games／PC Monitor 短按 B 返回、Hardware Test 长按 B 800 ms 返回）
 ```
 
 Dashboard 页面依次覆盖光照、热敏、MPU6050、两路 LED、蜂鸣器、两路电机、MicroSD、GPIO25/26 PWM、GPIO32/33 ADC、系统状态和 About。左右键切页，上下键调节当前值，A 执行动作，B 短按停止或取消、长按 800 ms 返回 Launcher。硬件状态集中在 `board_state_t`，UI 引用集中在 `ui_state_t`。
 
 `Games` 是占位 App：不获取 LVGL 输入焦点、不注册按键、不访问硬件，页面上只有 `Games`／`Coming soon`／`B Back` 三段文本，返回由 Launcher 现有的 App 打开态 B 转发分支完成。它同时也是首个独立业务目录的范例，后续业务 App 按同样结构新增。
+
+`PC Monitor` 是同结构的第二个业务 App（`main/apps/pc_monitor/`），只交付静态 UI 骨架：标题、CPU／RAM／GPU／TEMP 四行指标与页脚返回提示，四项值均为编译期占位 `-- %`／`-- %`／`-- %`／`-- °C`，名称列与值列用独立标签加固定列宽对齐。同样不取得输入焦点、不访问硬件、不创建 Task 或 timer，也不接数据源——真实 PC 指标通信按设计文档第 15 节安排在节点 11。
 
 显示屏为 160 × 128 ST7735 兼容面板，使用 SPI2、RGB565 交换字节格式与 3 个全屏 DMA 缓冲；LVGL tick 为 1 ms，UI 目标刷新周期为 16 ms。TFT 与 MicroSD 共用 SPI2，通过独立 CS 分时访问。
 
@@ -46,8 +48,8 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 ## 目标架构与演进约束
 
-`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation（统一打开／返回、App 内容根对象所有权）与 Launcher（2 列 × 2 行动态入口、焦点移动、分页、经 Navigation 进入／返回）；`main/apps/` 存放业务 App，当前只有占位 `Games`；普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App、把 `Games` 放在其前一位，并默认启动 Launcher。BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C，也不直接依赖 Launcher。
+`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation（统一打开／返回、App 内容根对象所有权）与 Launcher（2 列 × 2 行动态入口、焦点移动、分页、经 Navigation 进入／返回）；`main/apps/` 存放业务 App，当前有占位 `Games` 与静态骨架 `PC Monitor`；普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App、把 `Games` 与 `PC Monitor` 排在它之前，并默认启动 Launcher。BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C，也不直接依赖 Launcher。
 
 ## 验证入口与已知缺口
 
-仓库目前没有自动化测试。最低验证为 `idf.py build`；硬件改动还需烧录实机，检查启动日志、六个按键、屏幕刷新及受影响外设。`main/framework/` 的 Framework、Navigation、Launcher 分别提供 `XIAOMIAO_FRAMEWORK_SELF_TEST`、`XIAOMIAO_NAVIGATION_SELF_TEST`、`XIAOMIAO_LAUNCHER_SELF_TEST` 三个默认关闭的自测构建选项，编译、烧录与按键验证由人工执行。Hardware Test App 与 `Games` 占位 App 的可执行人工回归均已完成（`Games` 含双入口顺序、短按 B 返回、10 轮生命周期、双 App 焦点保持与 `Hardware Test` 15 页回归，见 `ROADMAP.md`）。当前待解决事项以 `ROADMAP.md` 为准，主要包括 GD32 `0x40` 协议源码缺失、相应 LED／电机／MPU6050 实机行为尚未验证，以及已复现但未定位根因的 MicroSD／GPIO22 冲突。
+仓库目前没有自动化测试。最低验证为 `idf.py build`；硬件改动还需烧录实机，检查启动日志、六个按键、屏幕刷新及受影响外设。`main/framework/` 的 Framework、Navigation、Launcher 分别提供 `XIAOMIAO_FRAMEWORK_SELF_TEST`、`XIAOMIAO_NAVIGATION_SELF_TEST`、`XIAOMIAO_LAUNCHER_SELF_TEST` 三个默认关闭的自测构建选项，编译、烧录与按键验证由人工执行。Hardware Test App、`Games` 与 `PC Monitor` 占位／骨架 App 的可执行人工回归均已完成（`Games` 含双入口顺序、短按 B 返回、10 轮生命周期、双 App 焦点保持与 `Hardware Test` 15 页回归；`PC Monitor` 含三入口顺序、短按 B 返回、8 轮生命周期、`screen children` 恒为 2 与两种 B 语义并存，轮次口径差异已由人工确认接受，均见 `ROADMAP.md`）。当前待解决事项以 `ROADMAP.md` 为准，主要包括 GD32 `0x40` 协议源码缺失、相应 LED／电机／MPU6050 实机行为尚未验证，以及已复现但未定位根因的 MicroSD／GPIO22 冲突。
