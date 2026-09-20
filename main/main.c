@@ -49,6 +49,10 @@
 #include "framework/xiaomiao_launcher_selftest.h"
 #endif
 
+#if XIAOMIAO_SETTINGS_SERVICE_SELF_TEST
+#include "services/xiaomiao_settings_service_selftest.h"
+#endif
+
 #include "apps/games/xiaomiao_games.h"
 #include "apps/pc_monitor/xiaomiao_pc_monitor.h"
 #include "apps/settings/xiaomiao_settings.h"
@@ -56,6 +60,7 @@
 #include "framework/xiaomiao_app.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
+#include "services/xiaomiao_settings_service.h"
 
 #ifndef CONFIG_IDF_TARGET
 #define CONFIG_IDF_TARGET "esp32"
@@ -2644,8 +2649,32 @@ void app_main(void)
                                  LVGL_TASK_PRIORITY,
                                  NULL);
     ESP_ERROR_CHECK(ret == pdPASS ? ESP_OK : ESP_FAIL);
+#elif XIAOMIAO_SETTINGS_SERVICE_SELF_TEST
+    ESP_LOGI(TAG, "Settings service self test build: skipping launcher");
+
+    /*
+     * Only NVS is needed. The test drives the Service through its public
+     * interface, restarts the chip between steps and halts with the
+     * `SETTINGS_SERVICE_SELF_TEST: PASS` marker (goal node 9, checkpoint 2).
+     */
+    xiaomiao_settings_service_selftest_run();
+    ESP_LOGI(TAG, "Settings service self test done, halting");
+    vTaskSuspend(NULL);
 #else
     ESP_LOGI(TAG, "Xiaomiao LVGL 9.5 launcher boot");
+
+    /*
+     * System Services come up before the hardware and LVGL stages
+     * (design doc section 12; goal node 9, decision 1). A failure only
+     * costs persistence: the Service keeps serving the defaults and the
+     * boot continues, so it is logged here and never terminates the
+     * startup.
+     */
+    esp_err_t settings_err = xiaomiao_settings_service_init();
+    if (settings_err != ESP_OK) {
+        ESP_LOGW(TAG, "Settings service unavailable: %s (0x%x), continuing with defaults",
+                 esp_err_to_name(settings_err), (unsigned)settings_err);
+    }
 
     sensor_history_init();
     buttons_init();

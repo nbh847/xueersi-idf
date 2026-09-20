@@ -1,19 +1,26 @@
 /*
- * Settings App (goal node 8).
+ * Settings App (goal nodes 8 and 9).
  *
- * UI skeleton for the future Settings Service: an in-App menu
- * (Wi-Fi / Display / Sound / System) plus four read-only status pages.
+ * UI skeleton plus the first real Service read: an in-App menu
+ * (Wi-Fi / Display / Sound / System) with four read-only detail pages.
  * Everything is built under the Navigation content root; the App never
  * creates, switches or deletes a global screen and never touches
- * hardware, NVS, a Service or a network API.
+ * hardware, NVS or a network API.
  *
- * Two boundary rules drive the design:
- * - No page offers a switch or a value. The Settings Service, NVS
- *   persistence, Wi-Fi and the Audio Service do not exist yet, so a
- *   control could neither take effect nor be stored (goal decisions 12
- *   and 13). Each page states the missing capability and its node.
- * - Nothing reads hardware or a Service to fabricate a state: there is
- *   no "Connected", no volume and no "Saved" hint anywhere.
+ * Boundary rules:
+ * - Only two pages talk about a missing capability (Wi-Fi, Sound) and
+ *   they name the node that will deliver it. Neither offers a switch,
+ *   because the preferences the Settings Service stores have no effect
+ *   until nodes 10 and 12 consume them (goal node 9, decision 3).
+ * - Display states a hardware fact instead of a missing setting: the
+ *   backlight is tied to VCC, so there is no brightness to store (goal
+ *   node 9, decision 4).
+ * - System is the only page that reads the Settings Service, and it
+ *   reads it once per entry without creating a timer. It reports the
+ *   real persistence state, so a degraded boot can never be shown as
+ *   "saved" (goal node 9, decisions 5 and 6).
+ * - Nothing reads hardware to fabricate a state: there is no
+ *   "Connected" and no volume anywhere.
  *
  * Input: the App takes the focus on its own root inside the LVGL default
  * group, so LVGL sends it the key events and the Launcher's key handler
@@ -33,12 +40,15 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
 #include "framework/xiaomiao_navigation.h"
+#include "services/xiaomiao_settings_service.h"
 
 static const char TAG[] = "settings";
 
@@ -79,13 +89,16 @@ static const char TAG[] = "settings";
 #define SETTINGS_MENU_STEP  22
 #define SETTINGS_MENU_H     20
 
-/* Status pages reuse the Tools detail-page grid: capability name, state,
- * then the node that implements it. */
-#define SETTINGS_STATUS_HEAD_Y  34
-#define SETTINGS_STATUS_STATE_Y 56
-#define SETTINGS_STATUS_NODE_Y  80
-#define SETTINGS_STATUS_LINE_H  16
-#define SETTINGS_STATUS_NODE_H  14
+/* Detail pages reuse the Tools grid: page subject, the state it is
+ * really in, then one line of context. */
+#define SETTINGS_STATUS_HEAD_Y    34
+#define SETTINGS_STATUS_STATE_Y   56
+#define SETTINGS_STATUS_DETAIL_Y  80
+#define SETTINGS_STATUS_LINE_H    16
+#define SETTINGS_STATUS_DETAIL_H  14
+
+/* Longest System detail line, e.g. "NVS error 0x110C". */
+#define SETTINGS_SYSTEM_DETAIL_MAX 24
 
 /* Poll period for the B release check; the latch itself is event driven. */
 #define SETTINGS_B_RELEASE_POLL_MS 20
@@ -242,13 +255,14 @@ static void settings_build_menu(lv_obj_t *content)
 }
 
 /*
- * One status page: which capability the section needs, that it is not
- * available yet, and the node that delivers it. Read-only by design, so
- * the user cannot mistake the skeleton for a working setting (goal
- * decisions 12 and 13).
+ * One detail page: the section, the state it is really in, and one line
+ * of context. Every page is read-only, so no line can be mistaken for a
+ * control or for a capability that is not there (goal node 8 decisions
+ * 12 and 13; goal node 9 decision 5).
  */
-static void settings_build_status(lv_obj_t *content, const char *title,
-                                  const char *headline, const char *node_line)
+static void settings_build_detail(lv_obj_t *content, const char *title,
+                                  const char *headline, const char *state,
+                                  uint32_t state_color, const char *detail)
 {
     settings_create_page_title(content, title);
 
@@ -256,20 +270,75 @@ static void settings_build_status(lv_obj_t *content, const char *title,
                          SETTINGS_COLOR_TEXT, 0, SETTINGS_STATUS_HEAD_Y,
                          SETTINGS_SCREEN_W, SETTINGS_STATUS_LINE_H,
                          LV_TEXT_ALIGN_CENTER);
-    /*
-     * Capability state, not a device fault and not a running state: no
-     * value is fabricated and nothing is connected, applied or stored.
-     */
-    settings_place_label(content, "Unavailable", &lv_font_montserrat_12,
-                         SETTINGS_COLOR_WARN, 0, SETTINGS_STATUS_STATE_Y,
-                         SETTINGS_SCREEN_W, SETTINGS_STATUS_LINE_H,
-                         LV_TEXT_ALIGN_CENTER);
-    settings_place_label(content, node_line, &lv_font_montserrat_10,
-                         SETTINGS_COLOR_MUTED, 0, SETTINGS_STATUS_NODE_Y,
-                         SETTINGS_SCREEN_W, SETTINGS_STATUS_NODE_H,
+    settings_place_label(content, state, &lv_font_montserrat_12, state_color,
+                         0, SETTINGS_STATUS_STATE_Y, SETTINGS_SCREEN_W,
+                         SETTINGS_STATUS_LINE_H, LV_TEXT_ALIGN_CENTER);
+    settings_place_label(content, detail, &lv_font_montserrat_10,
+                         SETTINGS_COLOR_MUTED, 0, SETTINGS_STATUS_DETAIL_Y,
+                         SETTINGS_SCREEN_W, SETTINGS_STATUS_DETAIL_H,
                          LV_TEXT_ALIGN_CENTER);
 
     settings_create_footer(content, "B Back");
+}
+
+/*
+ * The only page that reads a Service, and only through its public
+ * interface. It reports where the current configuration came from and,
+ * when there is one, the raw error of the last failed load or write.
+ * The state is read once per entry and no timer is created.
+ */
+static void settings_build_system(lv_obj_t *content)
+{
+    /* Fetched to prove the Service is readable; the page reports the
+     * Service state, not the values of the persisted fields. */
+    xiaomiao_settings_t snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
+    const esp_err_t get_err = xiaomiao_settings_get(&snapshot);
+    (void)snapshot;
+
+    char detail[SETTINGS_SYSTEM_DETAIL_MAX];
+    const char *state;
+    uint32_t state_color;
+
+    if (get_err != ESP_OK) {
+        /* The states must stay distinguishable: a degraded boot is never
+         * displayed as a successful save (goal node 9, decision 6). */
+        state = "Unavailable";
+        state_color = SETTINGS_COLOR_WARN;
+        snprintf(detail, sizeof(detail), "Settings unavailable");
+    }
+    else {
+        switch (xiaomiao_settings_source()) {
+        case XIAOMIAO_SETTINGS_SOURCE_NVS:
+            state = "Loaded from NVS";
+            state_color = SETTINGS_COLOR_TEXT;
+            break;
+        case XIAOMIAO_SETTINGS_SOURCE_RECOVERED:
+            state = "Defaults restored";
+            state_color = SETTINGS_COLOR_WARN;
+            break;
+        case XIAOMIAO_SETTINGS_SOURCE_DEGRADED:
+            state = "Not persisted";
+            state_color = SETTINGS_COLOR_WARN;
+            break;
+        case XIAOMIAO_SETTINGS_SOURCE_DEFAULTS:
+        default:
+            state = "Defaults applied";
+            state_color = SETTINGS_COLOR_TEXT;
+            break;
+        }
+
+        const esp_err_t last_err = xiaomiao_settings_last_error();
+        if (last_err != ESP_OK) {
+            snprintf(detail, sizeof(detail), "NVS error 0x%X", (unsigned)last_err);
+        }
+        else {
+            snprintf(detail, sizeof(detail), "2 stored fields");
+        }
+    }
+
+    settings_build_detail(content, "System", "Settings Service", state,
+                          state_color, detail);
 }
 
 static void settings_show_view(settings_view_t view)
@@ -293,20 +362,24 @@ static void settings_show_view(settings_view_t view)
         settings_build_menu(s_content);
         break;
     case SETTINGS_VIEW_WIFI:
-        settings_build_status(s_content, "Wi-Fi", "Wi-Fi Service",
+        settings_build_detail(s_content, "Wi-Fi", "Wi-Fi Service",
+                              "Unavailable", SETTINGS_COLOR_WARN,
                               "Implemented in node 10");
         break;
     case SETTINGS_VIEW_DISPLAY:
-        settings_build_status(s_content, "Display", "Display control",
-                              "Backend in node 9");
+        /* Hardware fact, not a missing setting: the backlight is wired
+         * to VCC, so there is no brightness to store or restore. */
+        settings_build_detail(s_content, "Display", "Brightness fixed",
+                              "Backlight tied to VCC", SETTINGS_COLOR_TEXT,
+                              "No display settings");
         break;
     case SETTINGS_VIEW_SOUND:
-        settings_build_status(s_content, "Sound", "Audio Service",
+        settings_build_detail(s_content, "Sound", "Audio Service",
+                              "Unavailable", SETTINGS_COLOR_WARN,
                               "Implemented in node 12");
         break;
     case SETTINGS_VIEW_SYSTEM:
-        settings_build_status(s_content, "System", "System settings",
-                              "Backend in node 9");
+        settings_build_system(s_content);
         break;
     }
 
