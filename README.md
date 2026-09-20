@@ -26,7 +26,8 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 ## 开发文档导航
 
 - [`AGENTS.md`](AGENTS.md)：Agent 与贡献者进入仓库时的执行规则、构建命令和验证要求。
-- [`ROADMAP.md`](ROADMAP.md)：当前进度、下一步、待确认事项及最近验证记录，是项目状态源。
+- [`ROADMAP.md`](ROADMAP.md)：当前状态、当前开发节点、有序开发节点、下一步与已知风险，是项目状态源。
+- [`goals/ROADMAP-history.md`](goals/ROADMAP-history.md)：逐条施工与验证流水的日期索引（结论 + 对应 Goal 路径）；证据细则在各 Goal 文档。
 - [`docs/project-overview.md`](docs/project-overview.md)：当前代码结构、启动链、双 MCU 边界和开发入口。
 - [`docs/xiaomiao_firmware_v0.1_design.md`](docs/xiaomiao_firmware_v0.1_design.md)：Launcher 与 App Framework 的目标设计，尚未全部实现。
 

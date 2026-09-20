@@ -6,7 +6,7 @@
 
 ## Goal 文档与历史记录
 
-每个施工任务使用 `goals/YYYYMMDD-HHMM-<goal-slug>.md` 保存目标、边界、实现决策、检查点、验收证据和未验证范围。Goal 完成后必须保留原文，只在文档中更新状态和交付结果；不要因为功能已完成而删除。保留这些记录可以让后续 Agent 复用已确认的技术决策、验证证据和已知限制，避免重复调研或误判项目状态。当前进度和唯一状态入口仍由 `ROADMAP.md` 维护。
+每个施工任务使用 `goals/YYYYMMDD-HHMM-<goal-slug>.md` 保存目标、边界、实现决策、检查点、验收证据和未验证范围。Goal 完成后必须保留原文，只在文档中更新状态和交付结果；不要因为功能已完成而删除。保留这些记录可以让后续 Agent 复用已确认的技术决策、验证证据和已知限制，避免重复调研或误判项目状态。当前进度和唯一状态入口仍由 `ROADMAP.md` 维护；逐条施工与验证流水的日期索引在 `goals/ROADMAP-history.md`，只记录“发生了什么、结论、施工文档路径”，细则以各 Goal 为准，不要在 `ROADMAP.md` 里重建流水记录。
 
 ## 项目结构与模块组织
 
@@ -45,7 +45,7 @@ idf.py -B .tmp/build-baseline/build -D SDKCONFIG=$(pwd)/.tmp/build-baseline/sdkc
 - 本仓库以 ESP-IDF 6.1 为唯一目标版本；`idf.py --version` 应输出 `ESP-IDF v6.1`。
 - 若安装使用非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），以进程级环境变量 `IDF_TOOLS_PATH` 和 `IDF_PYTHON_ENV_PATH` 指向实际安装位置，不修改系统环境。
 - `PATH` 中的 `idf.py.exe`（idf-exe 包装器）`--version` 显示的是包装器自身版本；确认 IDF 版本应使用 `python "$env:IDF_PATH\tools\idf.py" --version`。
-- 2026-09-19 已按上述命令完成全新配置构建与二次构建验证，结果见 `ROADMAP.md`。
+- 2026-09-19 已按上述命令完成全新配置构建与二次构建验证，结果见 `goals/20260919-1834-build-baseline.md`。
 
 GD32 固件使用 Keil 打开 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`。`go.py` 是原厂 MicroPython 环境的硬件探查脚本，不属于 ESP-IDF 构建流程；运行前按脚本提示断开电机。
 

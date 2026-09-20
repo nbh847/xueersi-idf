@@ -212,7 +212,7 @@ esp_err_t xiaomiao_settings_last_error(void);
 
 ## 验收标准
 
-> 勾选依据见“验证结果”与 `ROADMAP.md` 的对应“最近验证”条目。第 7 条只部分验证：读取失败与降级已在自测第 6 步实测，`nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不引入自定义分区表的前提下构造，只按源码检查确认（该路径只记录原始错误码、装载内存默认值、不使用 `ESP_ERROR_CHECK`、不擦分区、不终止启动），按项目惯例标记为不阻塞收口。
+> 勾选依据见“验证结果”与 `goals/ROADMAP-history.md` 的 2026-09-20 条目（重构前位于 `ROADMAP.md` 的“最近验证”节）。第 7 条只部分验证：读取失败与降级已在自测第 6 步实测，`nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不引入自定义分区表的前提下构造，只按源码检查确认（该路径只记录原始错误码、装载内存默认值、不使用 `ESP_ERROR_CHECK`、不擦分区、不终止启动），按项目惯例标记为不阻塞收口。
 
 - [x] 新增独立 Settings Service，App 不直接访问 NVS。（检索确认 `nvs_*` 调用只出现在 `main/services/`；`xiaomiao_settings.c` 内无 `nvs_`／`nvs_flash`）
 - [x] 默认配置只有 `wifi_auto_connect=true` 与 `sound_enabled=true`。（首启日志 `source=defaults (wifi_auto_connect=1, sound_enabled=1)`）
