@@ -34,6 +34,12 @@ idf.py -B .tmp/build-baseline/build -D SDKCONFIG=$(pwd)/.tmp/build-baseline/sdkc
 idf.py -B .tmp/build-baseline/build -D SDKCONFIG=$(pwd)/.tmp/build-baseline/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" build
 ```
 
+### Agent 与人工验证分工
+
+- 为节省开发时间，ESP-IDF 编译、`set-target`、烧录、串口监视以及目标板按键和外设验证统一由人工执行。Agent 不得主动运行 `idf.py build`、`idf.py set-target`、`idf.py flash`、`idf.py monitor`、`esptool` 或直接占用设备串口。
+- Agent 负责提供准确的人工验证命令和预期结果，执行源码与 diff 静态检查，并复核人工提供的命令输出、串口日志、截图和实机结果。
+- 缺少人工验证证据时，Agent 必须将对应项目标记为“未验证”，不得根据历史缓存、构建产物或推测宣称通过。
+
 环境要求与已验证事实：
 
 - 本仓库以 ESP-IDF 6.1 为唯一目标版本；`idf.py --version` 应输出 `ESP-IDF v6.1`。
@@ -49,7 +55,7 @@ C 代码使用 4 空格缩进，花括号沿用 `main/main.c` 的现有风格。
 
 ## 测试与验证
 
-当前没有自动化测试套件。每次改动至少运行 `idf.py build`；涉及硬件时，在目标板验证启动、按键、显示刷新及受影响外设，并检查串口日志无新增错误。修改引脚、I2C 地址或协议时，同步核对并更新 `README.md`。无法完成实机验证时，在 PR 中明确未验证范围。
+当前没有自动化测试套件。每次改动至少需要人工执行 `idf.py build`；涉及硬件时，由人工在目标板验证启动、按键、显示刷新及受影响外设，并检查串口日志无新增错误。Agent 只执行源码、配置、diff 等静态检查并复核人工验证证据，不主动编译、烧录、监视串口或操作目标板。修改引脚、I2C 地址或协议时，同步核对并更新 `README.md`。无法完成人工验证时，在 Goal、`ROADMAP.md` 和 PR 中明确未验证范围。
 
 影响项目状态的实现、修复或文档决策完成后，同步更新 `ROADMAP.md`；未验证事项不得记为完成。Launcher 分层改造应以现有 Dashboard 行为为回归基线，避免一次性搬迁全部代码。
 

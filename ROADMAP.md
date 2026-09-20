@@ -8,13 +8,13 @@
 - Dashboard 已覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统和 About。
 - ESP32 端已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。
 - GD32 工程当前只确认实现 USB CDC、USART1 桥和 ESP32 IO0/EN 控制；I2C `0x40` LED/电机从机协议未在仓库源码中实现。
-- Launcher、App Framework、Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，位于 `main/framework/`；Launcher、Navigation 和 App 切换尚未实现。
+- Service 和 BSP 分层仍处于设计阶段。App Framework 核心运行时（App 描述、Registry、Manager）已于节点 1 实现，Navigation 统一进入／返回与内容根对象所有权已于节点 2 实现，均位于 `main/framework/`；Launcher 与正式 App 切换尚未实现。
 
 ## 当前开发节点
 
 - 节点 0“构建基线恢复”已完成（2026-09-19，全新配置构建、烧录和基础交互验证通过；未覆盖全部外设回归）。施工文档为 `goals/20260919-1834-build-baseline.md`。
 - 节点 1“App Framework”已完成（2026-09-20，框架代码、自测代码、普通构建、自测构建、自测固件 PASS 标记和普通固件 Dashboard 回归均通过）。施工文档为 `goals/20260919-2037-app-runtime.md`。
-- 下一个开发节点为节点 2“Navigation”，尚未开始。
+- 节点 2“Navigation”已完成（2026-09-20，导航运行时 + 自测 + 自测固件实机 PASS + 普通构建 15 页 Dashboard 回归全部通过）。施工文档为 `goals/20260920-0816-navigation.md`。
 - GD32 实机固件与 README 中 `0x40` 协议的对应关系仍在待确认状态，不阻塞不依赖 LED、电机的 v0.1 框架开发。
 
 ## 有序开发节点
@@ -23,7 +23,7 @@
 
 - [x] 节点 0：构建基线恢复。
 - [x] 节点 1：App Framework。
-- [ ] 节点 2：Navigation。
+- [x] 节点 2：Navigation。
 - [ ] 节点 3：Launcher。
 - [ ] 节点 4：Hardware Test App。
 - [ ] 节点 5：Games 占位 App。
@@ -41,9 +41,8 @@
 
 ## 下一步
 
-1. 实施节点 2“Navigation”，建立统一导航和返回机制；以节点 1 的 App Framework 为基础，不提前开发 Launcher。
-2. 节点 2 验收后再实施节点 3“Launcher”。
-3. 在节点 4“Hardware Test App”中逐项回归 LED、电机、MicroSD、MPU6050 等外设。
+1. 实施节点 3“Launcher”：在 Navigation 之上构建两列首页、焦点网格与分页，以现有 Dashboard 行为为回归基线。
+2. 在节点 4“Hardware Test App”中逐项回归 LED、电机、MicroSD、MPU6050 等外设。
 
 ## 待确认与已知风险
 
@@ -54,6 +53,10 @@
 
 ## 最近完成
 
+- 2026-09-20 09:54：完成节点 2“Navigation”：交付 `main/framework/xiaomiao_navigation.{h,c}`（按 ID 打开、统一返回、查询当前 App、获取内容根；Manager 唯一状态来源，内容根在 App `open` 回调前发布、`close` 回调后统一删除）、`xiaomiao_navigation_selftest.{h,c}`（自动断言 + 3 轮 A/B 实机按键路径，PASS 标记 `NAVIGATION_SELF_TEST: PASS`）、CMake option `XIAOMIAO_NAVIGATION_SELF_TEST` 与 `main/main.c` 三形态互斥入口。三次失败均已定位修复（app_main 作用域→互斥结构；ccache 裸名 launcher→PATH 含 ccache；open 回调根对象缺失→s_app_root 提前赋值）。自测固件 `xiaomiao.bin` 0x83a10（49% free）实机 PASS，普通构建 15 页 Dashboard 回归通过。
+- 2026-09-20 08:33：实现节点 2“Navigation”代码与自测：新增 `main/framework/xiaomiao_navigation.h/.c`（按 ID 打开、统一返回、查询当前 App、获取内容根；Manager 仍为当前 App 唯一状态来源，App `close` 后由 Navigation 统一删除内容根）、`xiaomiao_navigation_selftest.h/.c`（错误路径与多轮 open/back 自动断言 + 3 轮 A 进入／B 返回／B 幂等实机按键路径，PASS 标记 `NAVIGATION_SELF_TEST: PASS`）、CMake option `XIAOMIAO_NAVIGATION_SELF_TEST` 及 `main/main.c` 最小自测入口。普通构建路径无行为变化。编译、烧录与实机验证待人工执行。
+- 2026-09-20 08:18：更新项目验证分工：ESP-IDF 编译、`set-target`、烧录、串口监视和目标板操作统一由人工执行；Agent 只提供命令、执行静态检查并复核人工证据。节点 2 Goal 已同步该要求。
+- 2026-09-20 08:16：创建节点 2“Navigation”施工文档，明确统一打开／返回接口、App 内容根对象所有权、LVGL 清理、开发自测、失败路径和验收标准；尚未开始实现。
 - 2026-09-20 07:33：完成节点 1“App Framework”：在 `main/framework/` 实现 `xiaomiao_app_t` 描述、静态 Registry（容量 16）、生命周期 Manager（init_all/open/close/current）和开发自测；通过 CMake option `XIAOMIAO_FRAMEWORK_SELF_TEST` 接入；普通构建和自测构建均通过 ESP-IDF 6.1 编译，自测固件串口输出 `APP_FRAMEWORK_SELF_TEST: PASS`，普通固件 15 页 Dashboard 翻页及 A/B 键回归通过。
 - 2026-09-19 20:50：将 `dependencies.lock` 独立同步到项目的 ESP-IDF 6.1 基线（IDF 6.1.0、锁文件格式 3.0.0）；LVGL 仍为 9.5.0，`manifest_hash` 未变化。
 - 2026-09-19 20:37：创建节点 1“App Framework”施工文档，明确框架接口、静态 Registry、生命周期 Manager、自测方式、范围边界和验收标准；尚未启动执行。
@@ -68,6 +71,13 @@
 
 ## 最近验证
 
+- 2026-09-20 10:00（节点 2 主 Agent 最终验收）：逐项核对 Goal、Navigation 与自测源码、CMake 接入、普通启动分支和人工验证记录，未发现阻塞缺陷；确认未修改 `dependencies.lock`、GD32、硬件协议、引脚或依赖版本。仅执行静态检查，未重复编译、烧录、串口监视或目标板操作。
+- 2026-09-20 09:54（节点 2 普通构建回归，人工执行、Agent 复核）：普通构建（不含 `XIAOMIAO_NAVIGATION_SELF_TEST`）通过 ESP-IDF 6.1 编译；烧录普通固件后 15 页 Hardware Dashboard 启动、左右翻页、A 执行动作与 B 停止／取消行为与节点 1 基线一致，无新增错误。节点 2 全部验收条款满足，标记完成。
+- 2026-09-20 09:43（节点 2 自测固件实机验证，人工执行、Agent 复核）：修复 open 回调根对象缺失 bug 后重构建烧录，串口证据完整：`automatic checks passed`（覆盖未初始化/空 ID/未知 ID/打开冲突/NOT_FOUND 无泄漏/两轮自动 open/back 与对象基线恢复）+ 3 轮实机按键路径（每轮 `test App opened` → `test App closed` → 幂等检查）+ 最终 `NAVIGATION_SELF_TEST: PASS`。Goal 检查点 1～3 与自测相关验收条款全部满足。剩余：普通构建回归。
+- 2026-09-20 09:23（节点 2 自测构建）：两轮失败后定位根因并完成自测固件构建。第一轮为 `app_main()` 变量重复定义（已按三形态互斥结构修复）；第二轮 ninja 静默 exit 2，经 idf.py 日志与 ninja 补跑定位为构建会话 PATH 缺 ccache（build.ninja launcher 写裸名 `ccache`，`CreateProcess failed`），非源码缺陷。PATH 补入 ccache 后补跑成功：`main.c` 仅 3 个预期内未使用函数警告，`xiaomiao.bin` 0x83a10 字节（应用分区 49% free），bootloader 与分区检查通过。烧录、`NAVIGATION_SELF_TEST: PASS` 实机路径与普通构建回归仍未验证。
+- 2026-09-20 08:33（节点 2 静态复核）：`git diff --check` 通过；逐文件核对改动仅覆盖 Goal 允许范围（新增 4 个 framework 文件、`main/CMakeLists.txt`、`main/main.c` 最小自测入口），普通构建路径行为不变；未修改 GD32、硬件协议、引脚、依赖版本或 `dependencies.lock`。编译、烧录与实机回归尚未执行，标记为未验证。
+- 2026-09-20 08:18（验证流程复核）：核对 `AGENTS.md` 与节点 2 Goal，确认编译、烧录、monitor 和实机交互均明确归属人工；Agent 的职责限定为命令准备、静态检查和证据复核，缺少人工结果时必须标记“未验证”。
+- 2026-09-20 08:16（节点 2 施工文档复核）：对照 v0.1 设计文档节点 2、节点 1 已交付接口和当前 Dashboard 启动链，确认范围未扩大到 Launcher、Hardware Test App、BSP、Service、GD32 或硬件迁移；验收覆盖 A 进入、B 返回、失败回滚、LVGL 对象完整释放和普通 Dashboard 回归。
 - 2026-09-20 08:08（节点 1 主 Agent 复核）：逐项核对 Goal 验收条款、实际源码、CMake 接入和 Git 改动范围，未发现阻塞缺陷；`git diff --check` 无错误。普通构建、自测构建、烧录、自测 PASS 标记和 Dashboard 实机回归采用已记录证据及用户确认的成功结果，本次未重复构建或烧录。
 - 2026-09-20 07:33（节点 1 验收）：普通构建 exit=0，烧录后串口出现 `Xiaomiao LVGL 9.5 dashboard boot`，15 页翻页及 A/B 键正常。自测构建（`.tmp/build-selftest/`，`XIAOMIAO_FRAMEWORK_SELF_TEST=ON`）exit=0，`xiaomiao.bin` 0xa47f0 字节，应用分区 36% free；烧录后串口出现 `APP_FRAMEWORK_SELF_TEST: PASS`。未修改 GD32、硬件协议、依赖版本或 `dependencies.lock`。
 - 2026-09-19 20:50：使用项目实际 Python 环境直接调用 `tools/idf.py --version`，输出 `ESP-IDF v6.1.0`；当前 `dependencies.lock` 与节点 0 隔离构建保存的锁快照哈希一致。本次未重新执行完整固件构建，以避免将工作区其他未提交源码改动混入依赖锁定验证；节点 0 已记录同一锁快照的完整构建证据。

@@ -6,7 +6,7 @@
 
 ## 当前实现
 
-ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。当前 Dashboard 业务代码仍位于 `main/main.c`；App Framework 核心运行时位于 `main/framework/`，尚未接入默认启动链。当前启动链为：
+ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。当前 Dashboard 业务代码仍位于 `main/main.c`；App Framework 运行时（App 描述、Registry、Manager、Navigation）位于 `main/framework/`，尚未接入默认启动链。当前启动链为：
 
 ```text
 app_main
@@ -42,7 +42,7 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 ## 目标架构与演进约束
 
-`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前仅 `main/framework/` 下的 App 描述、Registry 和 Manager 已实现，Navigation、Launcher、BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C。
+`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager 和 Navigation（统一打开／返回、App 内容根对象所有权）；Launcher、BSP 与 Service 分层仍未实现。实施时以小步迁移为原则：先建立可验证边界，再移动功能；保留 15 页硬件测试；SD 缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI 或 I2C。
 
 ## 验证入口与已知缺口
 
