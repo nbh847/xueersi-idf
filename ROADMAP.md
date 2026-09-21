@@ -56,8 +56,8 @@
 - [x] 节点 9：Settings Service 与 NVS。
 - [x] 节点 10：Wi-Fi Service。
 - [x] 节点 11：PC Monitor 通信。
-- [ ] 节点 12：Audio Service。
-- [ ] 节点 13：首个正式游戏。
+- [ ] 节点 12：Audio Service。（已推迟，2026-09-21 确认后面再做，等有真实消费者再启动）
+- [ ] 节点 13：首个正式游戏。（已推迟，2026-09-21 确认不在本设备做游戏）
 - [ ] 节点 14：Storage Service。
 - [ ] 节点 15：Assets 与文件系统。
 - [ ] 节点 16：GD32 `0x40` 协议补全。
