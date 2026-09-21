@@ -6,6 +6,10 @@
 
 ## 施工记录
 
+- 2026-09-21 21:48 -- 完成新版 MicroSD GPIO22 修复的静态复核：确认不再调用 `esp_vfs_fat_sdspi_mount()`，手动流程覆盖 SDSPI 初始化、卡初始化、FATFS 挂载、失败清理和成功卸载；未运行项目禁止的 ESP-IDF 构建、烧录或串口监视，实机结果待补。状态：已实施，待验证。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
+- 2026-09-21 21:43 -- 根据人工日志重新核对 IDF 6.1 失败清理时序：挂载前复位无法阻止 `esp_vfs_fat_sdspi_mount()` 内部在 `sdmmc_card_init()` 失败后立即执行的 GPIO 配置；`main/main.c` 改为手动 SDSPI 初始化与 FATFS 挂载，失败清理和成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22。状态：已实施，待静态复核和人工验证。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
+- 2026-09-21 21:29 -- 人工验证 MicroSD GPIO22 修复未通过：用户提供的烧录后日志中至少 6 次出现 `sdmmc_card_init failed (0x107)`，且每次约 1 ms 后仍出现 `gpio: conflict found for GPIO[22]`；`gpio_reset_pin()` 挂载前调用未达到“不再出现冲突警告”的验收预期。`0x107` 尚未通过已知良好 SD 卡区分具体根因，需重新核对失败清理路径。状态：验证失败，未收口。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
+- 2026-09-21 21:01 -- 定位 MicroSD GPIO22「冲突」根因并实施最小修复：经 IDF 6.1 源码逐行核实，`gpio: conflict found for GPIO[22]` 是 sdspi 驱动 `deinit_slot()` 不调 `esp_gpio_revoke()` 导致的占用位图泄漏（仅警告、非真实引脚冲突，README 与固件中 GPIO22 均只归 SD CS）；修复为 `main/main.c` `sd_try_mount()` 挂载前调 `gpio_reset_pin(PIN_NUM_SD_CS)`。`sdmmc_card_init failed (0x107)`（卡不响应超时）不在本任务处理，需插已知良好卡区分"未插卡预期"与共享 SPI 总线问题。代码未构建、未实机验证，人工验证命令与预期结果见 ROADMAP「下一步」。状态：已实施，待人工验证。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 16:33 -- 节点 11 收尾完成：PC Agent 自动化测试更新为 18/18，通过固件静态复核；项目负责人确认 ESP-IDF 构建、烧录与 CP5 手动场景全部通过。Agent 未重复执行固件构建、烧录或串口监视，人工确认未附新增日志、截图或资源数值；不可构造的底层分配／网络栈故障仍按源码检查记录。状态：已完成。→ `goals/20260921-1238-pc-monitor-communication.md`
 - 2026-09-21 12:42 后 -- 实施节点 11 全部代码（CP1～CP4）：新增 `pc-agent/`（monitor.py、pc_metrics.py、requirements.txt 固定 `psutil>=7.0,<8`、两个测试文件，17/17 通过）、`main/Kconfig.projbuild`（HOST 默认空、PORT 8766）、`main/services/xiaomiao_agent_service.{h,c}`、`main/main.c` 启动链接入、`main/apps/pc_monitor/xiaomiao_pc_monitor.c` 接入 LVGL timer 快照刷新、CMake 与 `sdkconfig.defaults` 更新。静态复核：括号配平／空白／分层边界（App 不碰 HTTP/Wi-Fi/cJSON/NVS）／资源释放／敏感字面量全部通过。口径差异（HTTP 无独立连接超时、ok 示例与判定文字矛盾按文字为准、可选字段类型错误按降级处理、Worker 栈 4096、age_sec≥3.0 拒绝）与未验证范围（全部固件行为、Agent 实机链路、栈高水位）记录于 Goal 实施记录。状态：已实施，待人工验证（CP5）。→ `goals/20260921-1238-pc-monitor-communication.md`
 - 2026-09-21 12:38 -- 创建节点 11“统一 Agent 基线与 PC Monitor 通信”施工文档并立项：固定一个 Python HTTP Agent、固定 IPv4 + 端口 `8766`、`/api/v1/health` 与 `/api/v1/pc/metrics`、固件 Agent Service、CPU／RAM／GPU／温度快照及 3 秒失效语义；服务发现、AI 额度和其他 PC 数据端点不在本节点实现。状态：已立项，尚未实施。→ `goals/20260921-1238-pc-monitor-communication.md`
@@ -59,6 +63,8 @@
 
 ## 验证记录
 
+- 2026-09-21 21:56 -- 新版 MicroSD GPIO22 修复人工验证通过：烧录后连续 9 次触发 `sdmmc_card_init failed (0x107)`，没有再出现 `gpio: conflict found for GPIO[22]`；Hardware Test 关闭、重开和返回 Launcher 正常。已知良好 SD 卡挂载尚未验证，`0x107` 根因仍待区分。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
+- 2026-09-21 21:48 -- 新版 MicroSD GPIO22 修复完成静态复核：确认不再调用 `esp_vfs_fat_sdspi_mount()`，手动流程覆盖 SDSPI 初始化、卡初始化、FATFS 挂载、失败清理和成功卸载；未运行项目禁止的 ESP-IDF 构建、烧录或串口监视，实机结果待补。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 11:49 -- 节点 10 最终验收：项目负责人确认此前暂缓项与完整手动回归均通过；已有逐项日志继续保留，新确认部分为人工口头证据、无新增日志或截图。Agent 未运行项目禁止的构建／烧录／Monitor，仅完成静态复核。NVS 提交失败与 Service 初始化失败故障注入仍只按源码检查确认，不阻塞收口。→ `goals/20260920-2210-wifi-service.md`
 - 2026-09-20 — Launcher 左右切换自测固件（首版模型）通过：`LAUNCHER_SELF_TEST: PASS`，引导路径 16 步，八种数量边界与失败路径均通过。该结论随同日模型修订失效。→ `goals/20260920-2015-launcher-lr-paging.md`
 - 2026-09-20 20:16 — 节点 9 收尾复核通过（用户确认开发与手动测试全部完成，Agent 复核静态检查）。→ `goals/20260920-1429-settings-service-nvs.md`
