@@ -1,0 +1,25 @@
+﻿# Xiaomiao partition table (goal node 10 follow-up, 2026-09-21).
+#
+# Replaces the IDF default single-app layout. What changed and why:
+#
+#   - factory grows from 1500 KB to 2 MB. The Wi-Fi Service pushed the app
+#     binary from 702 KB to 1359 KB, i.e. 90% of the 1500 KB slot, and nodes
+#     11-15 still have to add code (PC Monitor link, Audio, Snake, Storage,
+#     Assets). 2 MB leaves about 690 KB of headroom.
+#   - A dedicated `assets` data partition is reserved for resources that must
+#     not live in the app slot: a full Chinese font (about 0.93 MB for the
+#     6763 GB2312 glyphs at 16 px / 4bpp) plus icons and sounds. That work
+#     belongs to node 15 "Assets and file system" (design doc section 15).
+#     The partition stays unused, and therefore harmless, until then.
+#   - nvs keeps its offset (0xA000) and size (24 KB), so the stored Settings
+#     and Wi-Fi credentials are untouched by this change. phy_init and the
+#     factory offset (0x20000, required to be 64 KB aligned) are unchanged
+#     too: only the end of the layout moves.
+#   - About 384 KB stay unallocated at the end, available later for a
+#     coredump partition, a larger nvs, or further growth.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0xA000,   0x6000,
+phy_init,   data, phy,     0x10000,  0x1000,
+factory,    app,  factory, 0x20000,  2M,
+assets,     data, spiffs,  0x220000, 0x180000,

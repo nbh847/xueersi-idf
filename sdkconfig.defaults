@@ -19,6 +19,12 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_SPEED=80
 CONFIG_SPIRAM_OCCUPY_VSPI_HOST=y
 CONFIG_SPIRAM_USE_MALLOC=y
+# The Wi-Fi and LWIP buffers are the ones that can move: their DMA memory
+# otherwise competes with the three full-screen LCD buffers (120 KB) for
+# internal RAM, and the third LCD buffer no longer fits (goal node 10
+# follow-up). Allocating them in PSRAM first frees internal RAM; the
+# firmware's network traffic is tiny, so the throughput cost is accepted.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_DEF_REFR_PERIOD=16
 CONFIG_LV_DPI_DEF=60
@@ -39,3 +45,28 @@ CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=n
 # CONFIG_LV_USE_DEMO_BENCHMARK is not set
 CONFIG_SPI_MASTER_IN_IRAM=y
 CONFIG_SPI_MASTER_ISR_IN_IRAM=y
+
+# Wi-Fi Service and its provisioning page (goal node 10). The network
+# stack is part of the product now, so the reproducible configuration
+# names it instead of relying on defaults that a local sdkconfig could
+# have changed.
+CONFIG_ESP_WIFI_ENABLED=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+CONFIG_LWIP_DHCPS=y
+CONFIG_LWIP_IPV4=y
+# Not used by this firmware: 802.11k/v roaming support, MBO and
+# enterprise authentication only cost code size here.
+CONFIG_ESP_WIFI_11KV_SUPPORT=n
+CONFIG_ESP_WIFI_MBO_SUPPORT=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+
+# The Wi-Fi stack did not fit the default 1 MB app partition (the pre-Wi-Fi
+# build was already 702 KB), and the 1500 KB interim slot left only 141 KB
+# once Wi-Fi was in. The project now owns its layout in `partitions.csv`:
+# a 2 MB app slot for the remaining nodes, a 1.5 MB `assets` data partition
+# reserved for the font/icon/sound resources of node 15, unchanged nvs
+# (24 KB at the same offset) and about 384 KB left unallocated. Confirmed
+# with the project owner on 2026-09-21; the previous single-app defaults and
+# the interim `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE` are both replaced.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

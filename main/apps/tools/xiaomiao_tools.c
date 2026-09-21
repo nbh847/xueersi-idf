@@ -1,19 +1,20 @@
 /*
- * Tools App (goal node 7).
+ * Tools App (goal nodes 7 and 10).
  *
- * First business App with an in-App menu and two navigation levels:
- * a menu page (Wi-Fi / System Info / About) plus three read-only detail
- * pages. Everything is built under the Navigation content root; the App
- * never creates, switches or deletes a global screen and never touches
- * hardware, a Service or a network API.
+ * Business App with an in-App menu and two navigation levels: a menu
+ * page (Wi-Fi / System Info / About) plus three read-only detail pages.
+ * Everything is built under the Navigation content root; the App never
+ * creates, switches or deletes a global screen and never touches
+ * hardware or NVS.
  *
  * Two boundary rules drive the design:
  * - System Info shows real values read once on entry from read-only
- *   ESP-IDF APIs. No value is hardcoded and no periodic refresh exists
- *   (goal decision 13).
- * - The Wi-Fi Service is not implemented before node 10, so that page
- *   states the capability is unavailable instead of inventing a
- *   connection state (goal decision 15).
+ *   ESP-IDF APIs. No value is hardcoded (goal node 7, decision 13).
+ * - The Wi-Fi page reports the real Service state: status, SSID, signal
+ *   and IPv4 come from the Wi-Fi Service snapshot and are refreshed at
+ *   most once per second while the page is open. When the station is not
+ *   connected the page shows no address and no signal, and it never
+ *   touches or even asks for a password (goal node 10, checkpoint 4).
  *
  * Input: the App takes the focus on its own root inside the LVGL default
  * group, so LVGL sends it the key events and the Launcher's key handler
@@ -34,6 +35,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
@@ -42,10 +44,12 @@
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_netif_ip_addr.h"
 #include "lvgl.h"
 #include "sdkconfig.h"
 
 #include "framework/xiaomiao_navigation.h"
+#include "services/xiaomiao_wifi_service.h"
 
 static const char TAG[] = "tools";
 
@@ -101,6 +105,18 @@ static const char TAG[] = "tools";
 /* Poll period for the B release check; the latch itself is event driven. */
 #define TOOLS_B_RELEASE_POLL_MS 20
 
+/*
+ * Wi-Fi page: four data rows (status, SSID, signal, IPv4) refreshed at
+ * most once per second while the page is open (goal node 10,
+ * checkpoint 4).
+ */
+#define TOOLS_WIFI_ROW_COUNT  4
+#define TOOLS_WIFI_REFRESH_MS 1000
+#define TOOLS_WIFI_STATUS_MAX 24
+#define TOOLS_WIFI_SSID_MAX   40
+#define TOOLS_WIFI_SIGNAL_MAX 28
+#define TOOLS_WIFI_IP_MAX     20
+
 typedef enum {
     TOOLS_VIEW_MENU = 0,
     TOOLS_VIEW_WIFI,
@@ -125,9 +141,11 @@ static const char *const s_menu_labels[] = {
 static lv_obj_t *s_root;
 static lv_obj_t *s_content;
 static lv_obj_t *s_menu_items[TOOLS_MENU_ITEM_COUNT];
+static lv_obj_t *s_wifi_values[TOOLS_WIFI_ROW_COUNT];
 static lv_group_t *s_group;
 static lv_indev_t *s_keypad;
 static lv_timer_t *s_b_release_timer;
+static lv_timer_t *s_wifi_timer;
 static tools_view_t s_view = TOOLS_VIEW_MENU;
 static size_t s_menu_index;
 static bool s_b_latched;
@@ -247,26 +265,145 @@ static void tools_build_menu(lv_obj_t *content)
     tools_create_footer(content, "A Open  B Back");
 }
 
+static const char *tools_wifi_state_text(const xiaomiao_wifi_snapshot_t *snapshot)
+{
+    switch (snapshot->state) {
+    case XIAOMIAO_WIFI_CONNECTED:
+        return "Connected";
+    case XIAOMIAO_WIFI_CONNECTING:
+        return "Connecting";
+    case XIAOMIAO_WIFI_RETRY_WAIT:
+        return "Reconnecting";
+    case XIAOMIAO_WIFI_SCANNING:
+        return "Scanning";
+    case XIAOMIAO_WIFI_PROVISIONING:
+        return "Setup";
+    case XIAOMIAO_WIFI_DISABLED:
+        return "Off";
+    case XIAOMIAO_WIFI_NO_CREDENTIALS:
+        return "Not configured";
+    case XIAOMIAO_WIFI_AUTH_FAILED:
+        return "Auth failed";
+    case XIAOMIAO_WIFI_ERROR:
+        return "Error";
+    case XIAOMIAO_WIFI_DISCONNECTED:
+    default:
+        return "Not connected";
+    }
+}
+
+/* Names for the four signal levels of the goal's table. */
+static const char *tools_wifi_level_text(uint8_t level)
+{
+    switch (level) {
+    case 4:
+        return "Strong";
+    case 3:
+        return "Good";
+    case 2:
+        return "Fair";
+    case 1:
+        return "Weak";
+    default:
+        return "-";
+    }
+}
+
+static void tools_wifi_apply(void)
+{
+    xiaomiao_wifi_snapshot_t snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
+    const esp_err_t err = xiaomiao_wifi_get_snapshot(&snapshot);
+
+    char status[TOOLS_WIFI_STATUS_MAX];
+    char ssid[TOOLS_WIFI_SSID_MAX];
+    char signal[TOOLS_WIFI_SIGNAL_MAX];
+    char ip[TOOLS_WIFI_IP_MAX];
+
+    if (err != ESP_OK) {
+        snprintf(status, sizeof(status), "Unavailable");
+        snprintf(ssid, sizeof(ssid), "-");
+        snprintf(signal, sizeof(signal), "-");
+        snprintf(ip, sizeof(ip), "-");
+    }
+    else {
+        snprintf(status, sizeof(status), "%s", tools_wifi_state_text(&snapshot));
+
+        if (snapshot.state == XIAOMIAO_WIFI_CONNECTED) {
+            snprintf(ssid, sizeof(ssid), "%s", (snapshot.ssid[0] != '\0') ? snapshot.ssid : "-");
+            snprintf(signal, sizeof(signal), "%d dBm / %s", (int)snapshot.rssi,
+                     tools_wifi_level_text(snapshot.signal_level));
+            snprintf(ip, sizeof(ip), IPSTR, IP2STR(&snapshot.ipv4));
+        }
+        else {
+            /* No address and no signal from an earlier link (goal node
+             * 10, "State model"). */
+            snprintf(ssid, sizeof(ssid), "-");
+            snprintf(signal, sizeof(signal), "-");
+            snprintf(ip, sizeof(ip), "-");
+        }
+    }
+
+    const char *const values[TOOLS_WIFI_ROW_COUNT] = { status, ssid, signal, ip };
+    for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
+        if (s_wifi_values[i] != NULL) {
+            lv_label_set_text(s_wifi_values[i], values[i]);
+        }
+    }
+}
+
+static void tools_wifi_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    tools_wifi_apply();
+}
+
+/* The refresh timer exists only while the Wi-Fi page is on screen. */
+static void tools_wifi_timer_update(tools_view_t view)
+{
+    if (view == TOOLS_VIEW_WIFI) {
+        if (s_wifi_timer == NULL) {
+            s_wifi_timer = lv_timer_create(tools_wifi_timer_cb, TOOLS_WIFI_REFRESH_MS, NULL);
+            if (s_wifi_timer == NULL) {
+                ESP_LOGW(TAG, "wifi refresh timer creation failed");
+            }
+        }
+        return;
+    }
+
+    if (s_wifi_timer != NULL) {
+        lv_timer_delete(s_wifi_timer);
+        s_wifi_timer = NULL;
+    }
+}
+
+/*
+ * Real connection state, read through the Wi-Fi Service. The page never
+ * reads, shows or even asks for a password (goal node 10, checkpoint 4).
+ */
 static void tools_build_wifi(lv_obj_t *content)
 {
     tools_create_page_title(content, "Wi-Fi");
 
-    tools_place_label(content, "Wi-Fi Service", &lv_font_montserrat_12,
-                      TOOLS_COLOR_TEXT, 0, 34, TOOLS_SCREEN_W, 16,
-                      LV_TEXT_ALIGN_CENTER);
-    /*
-     * Real capability state, not a network state: the Service does not
-     * exist yet, so neither "Connected" nor "Disconnected" would be true
-     * (goal decision 15).
-     */
-    tools_place_label(content, "Unavailable", &lv_font_montserrat_12,
-                      TOOLS_COLOR_WARN, 0, 56, TOOLS_SCREEN_W, 16,
-                      LV_TEXT_ALIGN_CENTER);
-    tools_place_label(content, "Implemented in node 10", &lv_font_montserrat_10,
-                      TOOLS_COLOR_MUTED, 0, 80, TOOLS_SCREEN_W, 14,
-                      LV_TEXT_ALIGN_CENTER);
+    const char *const names[TOOLS_WIFI_ROW_COUNT] = { "Status", "SSID", "Signal", "IP" };
+
+    for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
+        const int32_t y = TOOLS_INFO_Y0 + (int32_t)i * TOOLS_INFO_STEP;
+
+        tools_place_label(content, names[i], &lv_font_montserrat_10, TOOLS_COLOR_TEXT,
+                          TOOLS_INFO_NAME_X, y, TOOLS_INFO_NAME_W, TOOLS_INFO_H,
+                          LV_TEXT_ALIGN_LEFT);
+        s_wifi_values[i] = tools_place_label(content, "-", &lv_font_montserrat_10,
+                                             TOOLS_COLOR_TITLE, TOOLS_INFO_VAL_X, y,
+                                             TOOLS_INFO_VAL_W, TOOLS_INFO_H,
+                                             LV_TEXT_ALIGN_RIGHT);
+    }
 
     tools_create_footer(content, "B Back");
+
+    /* Entering the page always shows a fresh read, not a cached one. */
+    tools_wifi_apply();
 }
 
 static const char *tools_chip_name(esp_chip_model_t model)
@@ -413,8 +550,12 @@ static void tools_show_view(tools_view_t view)
     for (size_t i = 0; i < TOOLS_MENU_ITEM_COUNT; ++i) {
         s_menu_items[i] = NULL;
     }
+    for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
+        s_wifi_values[i] = NULL;
+    }
 
     s_view = view;
+    tools_wifi_timer_update(view);
 
     switch (view) {
     case TOOLS_VIEW_MENU:
@@ -654,6 +795,11 @@ static void tools_close(void)
         s_b_release_timer = NULL;
     }
 
+    if (s_wifi_timer != NULL) {
+        lv_timer_delete(s_wifi_timer);
+        s_wifi_timer = NULL;
+    }
+
     if (s_root != NULL && s_group != NULL) {
         lv_group_remove_obj(s_root);
     }
@@ -661,6 +807,9 @@ static void tools_close(void)
     s_content = NULL;
     for (size_t i = 0; i < TOOLS_MENU_ITEM_COUNT; ++i) {
         s_menu_items[i] = NULL;
+    }
+    for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
+        s_wifi_values[i] = NULL;
     }
     s_root = NULL;
     s_group = NULL;

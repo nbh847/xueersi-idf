@@ -16,10 +16,11 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是位于 `main/apps/games/` 的占位 App，按 A 进入、短按 B 返回；`PC Monitor` 是位于 `main/apps/pc_monitor/` 的静态骨架 App，显示 CPU／RAM／GPU／TEMP 四项无数据占位 `--`，按 A 进入、短按 B 返回，真实 PC 数据待后续通信节点接入；`Tools` 是位于 `main/apps/tools/` 的菜单 App，提供 Wi-Fi、System Info、About 三项，System Info 读取真实只读系统信息，Wi-Fi 在 Wi-Fi Service 实现前如实显示不可用，详情页短按 B 返回菜单、菜单页短按 B 返回 Launcher；`Settings` 是位于 `main/apps/settings/` 的设置 App，提供 Wi-Fi、Display、Sound、System 四项：`System` 页读取 Settings Service 的真实持久化状态（已从 NVS 加载／写入默认值／损坏后恢复／未持久化），`Display` 页陈述背光直连 VCC、亮度不可调的硬件事实，`Wi-Fi` 与 `Sound` 仍如实标注需要后续节点的 Service；Wi-Fi 与 Sound 不提供开关，因为对应偏好要等节点 10、12 消费后才会生效。菜单与详情页同样是详情页短按 B 返回菜单、菜单页短按 B 返回 Launcher。App Framework 核心运行时、Navigation 与 Launcher 均在 `main/framework/` 实现，首个 System Service（Settings Service，负责默认值、校验、NVS 读写与安全回退）位于 `main/services/`。
-- 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，三重缓冲，稳定60fps UI
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是占位 App；`PC Monitor` 当前显示 CPU／RAM／GPU／TEMP 四项 `--`，真实 PC 数据属于节点 11；`Tools` 提供真实 Wi-Fi 状态、System Info 和 About；`Settings` 提供 Wi-Fi 配网／自动连接／忘记网络，以及只读的 Display、Sound、System 页面，其中 `sound_enabled` 要等节点 12 才会产生业务效果。App Framework、Navigation、Launcher 与全局 Wi-Fi 图标位于 `main/framework/`，Settings Service 与 Wi-Fi Service 位于 `main/services/`。
+- 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，双全屏 DMA 缓冲（原设计为三重；加入 Wi-Fi 后内部 DMA 内存不足，2026-09-21 确认改为双缓冲，60 MHz SPI 下仍满足 60fps），稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。
+- ESP32 侧固件已包含并完成实机验证的 Wi-Fi Service：进入 `Settings → Wi-Fi` 可启动配网，设备会开启受密码保护的临时热点 `Xiaomiao-XXXX`（密码每次会话随机生成），手机连接后在浏览器打开 `http://192.168.4.1` 选网并输入密码；凭据只在试连成功取得 IPv4 后才会保存，密码错误或超时不会覆盖原有网络。保存后支持开机自动连接与断线退避重连，`Configure` 可更换网络，`Forget network` 只删除 Wi-Fi 凭据。`Tools → Wi-Fi` 显示真实的连接状态、SSID、信号档位与 IPv4 地址，屏幕右上角在所有页面显示四档 Wi-Fi 状态图标。详细验证记录见 `goals/20260920-2210-wifi-service.md`。
 - GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现下文所述的 I2C `0x40` LED、电机从机协议。
 - ESP32 侧已经按原有 `0x40` 协议实现 LED、电机命令；该协议与 GD32 实机固件的联调状态仍待确认。欢迎大家测试或在 Issues 里提出建议。
 

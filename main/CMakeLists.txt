@@ -6,11 +6,17 @@ option(XIAOMIAO_SETTINGS_SERVICE_SELF_TEST "Compile the Settings Service self te
 set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
                    "framework/xiaomiao_app_manager.c"
                    "framework/xiaomiao_navigation.c"
-                   "framework/xiaomiao_launcher.c")
+                   "framework/xiaomiao_launcher.c"
+                   "framework/xiaomiao_wifi_indicator.c")
 
-# System Services (goal node 9). The Settings Service owns every NVS
-# access the firmware needs so far; Apps only see its public interface.
-set(SERVICE_SRCS "services/xiaomiao_settings_service.c")
+# System Services (goal nodes 9 and 10). The Settings Service owns the
+# persisted configuration, the Wi-Fi Service owns the whole network
+# lifecycle including the provisioning page; Apps only see their public
+# interfaces.
+set(SERVICE_SRCS "services/xiaomiao_settings_service.c"
+                 "services/xiaomiao_wifi_service.c"
+                 "services/xiaomiao_wifi_provisioning.c"
+                 "services/xiaomiao_wifi_dns.c")
 
 # Business Apps. The self test builds keep their own test data and never
 # register these descriptions (goal node 5, decision 14).
@@ -46,6 +52,11 @@ idf_component_register(SRCS "main.c" ${FRAMEWORK_SRCS} ${SERVICE_SRCS} ${APP_SRC
                                      esp_driver_sdspi
                                      esp_adc
                                      esp_hw_support
+                                     esp_wifi
+                                     esp_netif
+                                     esp_event
+                                     esp_http_server
+                                     lwip
                                      heap
                                      spi_flash
                                      fatfs

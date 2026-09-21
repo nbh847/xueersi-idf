@@ -6,6 +6,25 @@
 
 ## 施工记录
 
+- 2026-09-21 11:49 -- 节点 10 收尾完成：项目负责人确认人工构建、烧录及手动测试全部通过；Agent 同步 Goal、README、项目概览、AGENTS 与 ROADMAP，并在最终静态审查中修正 NVS 提交失败仍提前替换运行时凭据和关闭配网页的问题。状态：已完成。→ `goals/20260920-2210-wifi-service.md`
+- 2026-09-21 — 节点 10「更换网络」功能闭合：以正确密码试连真正不同的网络 `CMCC-5pu4`（信道 6、bssid 与旧网络不同）1.6 秒连上并保存，`POWERON_RESET` 真断电重启后 `saved network loaded, ssid='CMCC-5pu4'` → 自动连上新网络并取得 IP——新凭据跨断电存活且替换旧凭据。同时判定「错误密码不覆盖旧凭据」通过（写 NVS 唯一入口以取得 IPv4 为门控、失败试连从不落盘）。路由器级断线重连与 10 分钟空闲超时完成代码复核、无缺陷，连同图标三态由负责人决定暂缓。→ `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-21 — 节点 10 验证范围收敛：「错误密码不覆盖旧凭据」判定通过（写 NVS 唯一入口以取得 IPv4 为门控、失败试连从不落盘；失败试连后多次重启均连回原网络构成反证）；路由器级断线重连与 10 分钟空闲超时两项完成代码复核、无缺陷（三条会话收尾路径一致走 Service stop + 重连）。负责人决定本轮只补验「正确密码切换到另一个网络 + 重启持久化」，其余暂缓。→ `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-21 — 节点 10 配网链路复测通过并修掉两个阻塞性缺陷。修复：① 换网络时先释放旧关联再试连（此前 `esp_wifi_connect()` 在已关联时被驱动拒绝，导致**更换网络功能实际不可用**、只能干等 20 秒超时）；② 手机缓存旧密码导致首次关联必败一事经定位后**决定保持现状**（固定 SSID + 每次随机密码的必然结果）。复测证据：试连前旧连接被主动释放、不再出现 `sta is connected, disconnect before...`；提交另一个网络 `CMCC-5pu4` 后 4.5 秒失败并 `saved network kept`；回连原网络 2.1 秒成功并保存。同批确认生效：配网期间关闭省电（`Set ps type: 0 → 1`）、HT20、AP 跟随 STA 信道。仍未验证：路由器级断线重连、10 分钟空闲超时、以正确密码切换到另一网络的持久化、图标另外三个状态。→ `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-21 — 节点 10 配网首次走通并完成重启恢复验证。配网日志证明：扫描列出 10 个网络、手机提交后试连 `CMCC-U2Tx`、**取得 IPv4（192.168.1.29）之后才写入凭据**、会话逆序收尾并切回 STA；冷启动日志证明：`has_credentials=1`、自动连回同一 SSID 与同一 IP、Launcher 在取 IP 之前就已就绪（不阻塞启动）。期间修复三处：AP 配置必须先于 `esp_wifi_set_mode(APSTA)` 之后调用、配网会话期间 STA 断开不再触发旧网络重连、DNS 响应器改用 `SO_RCVTIMEO` 退出（lwip 的 UDP `shutdown()` 唤不醒阻塞的 `recvfrom()`）。**DNS 修复与退避重连、错误密码、忘记网络等路径仍未复测。** → `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-21 — 分区表重划（经确认，一次到位）：加 Wi-Fi 后 app 二进制 1359 KB 占满 1500 KB 槽位的 90.6%，只剩 141 KB，而 Flash 另有 2.41 MB 未进分区表。改为项目自有 `partitions.csv`：`nvs`（24 KB @ 0xA000）与 `phy_init`（4 KB）及 factory 起始偏移（0x20000）全部不变，`factory` 扩到 2 MB，新增 1.5 MB `assets`（data/spiffs）预留字体/图标/音效，末尾留约 384 KB。用 IDF `gen_esp32part.py` 校验通过。构建前需重新生成被忽略的本地 `sdkconfig`。→ `goals/20260920-2210-wifi-service.md`
+- 2026-09-21 — 节点 10 首个实机证据：双缓冲降级路径生效并确认接受。启动日志为 `third draw buffer unavailable (40960 bytes), falling back to two-buffer refresh` → `LVGL display: 160x128, dpi=60, 2 full-screen DMA buffers, SPI=60 MHz` → `Launcher ready, 5 app(s) registered`，证明 Wi-Fi Service 先于显示初始化且不阻塞启动、全局图标创建成功。项目负责人确认接受双缓冲（60 MHz SPI 下一帧 40 KB 约 5.5 ms、预算 16.7 ms；本屏无 TE 无法垂直同步，三缓冲只换抖动余量），不再为第三块缓冲调参。Wi-Fi 功能本身仍未验证。→ `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-21 — 节点 10 首轮人工构建与烧录：构建依次暴露三处问题（网页字符串漏引号、`HTTPD_ERR_HANDLER_URI_NOT_FOUND` 名称错误、`station_reset_retry` 前向引用）并已修复；烧录后首次启动在 `lvgl_display_init()` 断言 `buf3` 失败——Wi-Fi 占用的内部 RAM 使第三块全屏 LCD DMA 缓冲无法分配。处理：`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` 把 Wi-Fi／LWIP 缓冲移到 PSRAM，且第三块缓冲失败时运行时降级为双缓冲而非中止启动。**修复后尚未重新烧录。** → `goals/20260920-2210-wifi-service.md`
+
+- 2026-09-20 — 节点 10“Wi-Fi Service”源码实施完成，状态改为“已实施，等待人工验证”：新增 Wi-Fi Service（状态快照、幂等初始化、扫描、异步连接、退避重连、忘记网络、RSSI 采样）、SoftAP + DNS + HTTP 配网页、全局右上角状态图标，改造 Settings／Tools 的 Wi-Fi 页与启动链，并显式声明网络相关 `sdkconfig.defaults`。凭据按 goal 允许的私有适配器分支实现（驱动全程 `WIFI_STORAGE_RAM` + `xiaomiao/wifi_creds` blob v1）。→ `goals/20260920-2210-wifi-service.md`
+- 2026-09-20 — 节点 10 实现后静态检查通过（11 个文件括号配平、非 ASCII、制表符、行尾空白均为 0；7 个 `.c` 文件的 static 函数前向引用检查通过）。工具链 `-fsyntax-only` 检查因缺少 IDF 构建注入选项而失败，报错全部来自工具链系统头文件，不采信该结论。**未运行 `idf.py build`、烧录或 Monitor。** → 同上
+- 2026-09-20 — 节点 10 分区表确认（项目负责人选“改用 large single app”）：`sdkconfig.defaults` 加入 `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y`，app 分区由 1 MB 扩大为 1500 KB，nvs 仍为 24 KB 且偏移不变。这是该节点“不修改分区表”边界的唯一例外。因本地 `sdkconfig` 仍显式写着旧分区表选项，构建前需重新生成配置。→ 同上
+- 2026-09-20 — 节点 10 阻塞项记录：加入 Wi-Fi 后固件大概率超过默认 1 MB app 分区，需确认改用 large single app（app 1.5 MB，nvs 大小与偏移不变）或自定义分区表；该项被本节点“不修改分区表”的边界禁止，未擅自改动。→ 同上
+- 2026-09-20 22:10 -- 创建节点 10 施工文档并立项，固定 SoftAP + 手机网页配网、成功取得 IPv4 后再持久化凭据、自动连接与断线重连、Settings／Tools 接入，以及全局四档彩色 Wi-Fi 状态图标；状态为尚未实施。→ `goals/20260920-2210-wifi-service.md`
 - 2026-09-20 — 完成 Launcher 网格导航改造（修订三，最终版）：`←`／`→` 换列并在外侧列翻页、同行优先且缺行回退到目标页第一格，`↑`／`↓` 页内换行不翻页。自测固件 `LAUNCHER_SELF_TEST: PASS`（引导路径 13 步，含缺行回退断言），普通固件实机行为由人工确认无问题。→ `goals/20260920-2015-launcher-lr-paging.md`
 - 2026-09-20 — Launcher 网格导航（修订三）自测固件通过：`LAUNCHER_SELF_TEST: PASS`、引导路径 13 步，数量边界含新增的缺行回退断言（`n` 为 5／6 时第 2 行按 `→` 必须落到下一页第一格）。→ `goals/20260920-2015-launcher-lr-paging.md`
 - 2026-09-20（修订三）— Launcher 导航再修订：翻页改为**同行优先、缺行回退**（目标页没有对应行时落到该页第一行第一格，目标页没有任何 App 才不翻页），使 5 个 App 时第 1 页第 2 行也能进入第 2 页；数量边界新增该回退断言。修订二虽已通过自测并取得人工确认，仍被本次取代，其结论作废。→ `goals/20260920-2015-launcher-lr-paging.md`
@@ -37,6 +56,7 @@
 
 ## 验证记录
 
+- 2026-09-21 11:49 -- 节点 10 最终验收：项目负责人确认此前暂缓项与完整手动回归均通过；已有逐项日志继续保留，新确认部分为人工口头证据、无新增日志或截图。Agent 未运行项目禁止的构建／烧录／Monitor，仅完成静态复核。NVS 提交失败与 Service 初始化失败故障注入仍只按源码检查确认，不阻塞收口。→ `goals/20260920-2210-wifi-service.md`
 - 2026-09-20 — Launcher 左右切换自测固件（首版模型）通过：`LAUNCHER_SELF_TEST: PASS`，引导路径 16 步，八种数量边界与失败路径均通过。该结论随同日模型修订失效。→ `goals/20260920-2015-launcher-lr-paging.md`
 - 2026-09-20 20:16 — 节点 9 收尾复核通过（用户确认开发与手动测试全部完成，Agent 复核静态检查）。→ `goals/20260920-1429-settings-service-nvs.md`
 - 2026-09-20 — 节点 9 Settings UI 与五 App 回归通过：四项详情页文案与布局、Wi-Fi／Sound 页无开关、五 App 进入／返回均正常。**人工口头确认，无补充串口日志。** → 同上

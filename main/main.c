@@ -60,7 +60,9 @@
 #include "framework/xiaomiao_app.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
+#include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_settings_service.h"
+#include "services/xiaomiao_wifi_service.h"
 
 #ifndef CONFIG_IDF_TARGET
 #define CONFIG_IDF_TARGET "esp32"
@@ -340,6 +342,11 @@ static const board_button_t s_buttons[] = {
 };
 
 static lv_draw_buf_t s_draw_buf3;
+/* How many full-screen buffers the display really got. The third one is
+ * the pipelining extra, and since node 10 the Wi-Fi stack competes for
+ * the same internal DMA memory, so the real number can be lower than the
+ * configured one (see lvgl_display_init). */
+static uint8_t s_lcd_draw_buf_count = LCD_DRAW_BUF_COUNT;
 static ui_state_t s_ui;
 static board_state_t s_board = {
     .gesture = "ABSENT",
@@ -1396,32 +1403,51 @@ static lv_display_t *lvgl_display_init(esp_lcd_panel_io_handle_t io_handle)
     const size_t draw_buffer_sz = stride * LCD_DRAW_BUF_LINES;
     void *buf1 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
     void *buf2 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
-    void *buf3 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
     assert(buf1);
     assert(buf2);
-    assert(buf3);
+
+    /*
+     * The third full-screen buffer is the full-refresh pipelining extra.
+     * It shares the internal DMA pool with the Wi-Fi stack, so when it
+     * cannot be obtained the display drops to the two-buffer path and
+     * keeps running instead of aborting the boot. Two full-screen
+     * buffers still cover a whole refresh cycle at the target rate.
+     */
+    void *buf3 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
+    const bool triple_buffer = (buf3 != NULL);
 
     lv_display_set_color_format(display, color_format);
     lv_display_set_dpi(display, LCD_DPI);
     lv_display_set_buffers(display, buf1, buf2, draw_buffer_sz, LV_DISPLAY_RENDER_MODE_FULL);
-    lv_result_t res = lv_draw_buf_init(&s_draw_buf3,
-                                       LCD_H_RES,
-                                       LCD_DRAW_BUF_LINES,
-                                       color_format,
-                                       stride,
-                                       buf3,
-                                       draw_buffer_sz);
-    assert(res == LV_RESULT_OK);
-    lv_display_set_3rd_draw_buffer(display, &s_draw_buf3);
+
+    if (triple_buffer) {
+        lv_result_t res = lv_draw_buf_init(&s_draw_buf3,
+                                           LCD_H_RES,
+                                           LCD_DRAW_BUF_LINES,
+                                           color_format,
+                                           stride,
+                                           buf3,
+                                           draw_buffer_sz);
+        assert(res == LV_RESULT_OK);
+        lv_display_set_3rd_draw_buffer(display, &s_draw_buf3);
+        s_lcd_draw_buf_count = 3;
+    }
+    else {
+        s_lcd_draw_buf_count = 2;
+        ESP_LOGW(TAG,
+                 "third draw buffer unavailable (%u bytes), falling back to two-buffer refresh",
+                 (unsigned)draw_buffer_sz);
+    }
+
     lv_display_set_user_data(display, io_handle);
     lv_display_set_flush_cb(display, lvgl_flush_cb);
 
     ESP_LOGI(TAG,
-             "LVGL display: %dx%d, dpi=%d, %d full-screen DMA buffers, SPI=%d MHz",
+             "LVGL display: %dx%d, dpi=%d, %u full-screen DMA buffers, SPI=%d MHz",
              LCD_H_RES,
              LCD_V_RES,
              LCD_DPI,
-             LCD_DRAW_BUF_COUNT,
+             (unsigned)s_lcd_draw_buf_count,
              LCD_PIXEL_CLOCK_HZ / 1000000);
 
     return display;
@@ -1736,7 +1762,7 @@ static void ui_build_about_page(lv_obj_t *page)
              ui_kb(sram_total),
              ui_kb(psram_total),
              (unsigned)(LCD_PIXEL_CLOCK_HZ / 1000000),
-             (unsigned)LCD_DRAW_BUF_COUNT,
+             (unsigned)s_lcd_draw_buf_count,
              LVGL_VERSION_MAJOR,
              LVGL_VERSION_MINOR,
              LVGL_VERSION_PATCH);
@@ -1769,6 +1795,9 @@ static void ui_build_page_content(lv_obj_t *page)
     s_ui.title = ui_label(page, s_page_names[s_ui.page_id], 7, UI_BLACK, &lv_font_montserrat_14, LV_TEXT_ALIGN_LEFT);
     snprintf(idx, sizeof(idx), "%02u/%02u", (unsigned)s_ui.page_id + 1, (unsigned)UI_PAGE_COUNT);
     s_ui.status = ui_label(page, idx, 7, UI_BROWN, &lv_font_montserrat_10, LV_TEXT_ALIGN_RIGHT);
+    /* The global Wi-Fi indicator occupies the top-right corner, so the
+     * page counter stops short of it (goal node 10, checkpoint 5). */
+    lv_obj_set_size(s_ui.status, LCD_H_RES - 32, LV_SIZE_CONTENT);
 
     s_ui.accent = lv_obj_create(page);
     lv_obj_remove_style_all(s_ui.accent);
@@ -2676,6 +2705,19 @@ void app_main(void)
                  esp_err_to_name(settings_err), (unsigned)settings_err);
     }
 
+    /*
+     * The Wi-Fi Service follows the Settings Service and consumes its
+     * `wifi_auto_connect` preference (goal node 10, "Boot integration").
+     * It never waits for a scan, an association or a DHCP lease, and a
+     * failure only costs connectivity: the device stays usable offline
+     * and the Launcher still starts.
+     */
+    esp_err_t wifi_err = xiaomiao_wifi_service_init();
+    if (wifi_err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi service unavailable: %s (0x%x), continuing offline",
+                 esp_err_to_name(wifi_err), (unsigned)wifi_err);
+    }
+
     sensor_history_init();
     buttons_init();
 
@@ -2698,6 +2740,18 @@ void app_main(void)
     esp_timer_handle_t tick_timer = NULL;
     ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000));
+
+    /*
+     * The global Wi-Fi indicator is mounted on the top layer, so the
+     * Launcher, every App and the Hardware Test pages all show it (goal
+     * node 10, checkpoint 5). It is created before the LVGL task starts,
+     * so nothing else touches the object tree while it is built.
+     */
+    esp_err_t indicator_err = xiaomiao_wifi_indicator_create();
+    if (indicator_err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi indicator unavailable: %s (0x%x)",
+                 esp_err_to_name(indicator_err), (unsigned)indicator_err);
+    }
 
     BaseType_t ret = xTaskCreate(lvgl_task,
                                  "lvgl",
