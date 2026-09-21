@@ -1,0 +1,4 @@
+# Xiaomiao Agent runtime dependencies (goal node 11).
+# psutil 7.2.2 is the current stable release (PyPI, 2026-01-28, BSD-3-Clause,
+# CPython 3.6-3.14, official Windows wheels); 7.x is the supported line.
+psutil>=7.0,<8

@@ -16,13 +16,29 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是占位 App；`PC Monitor` 当前显示 CPU／RAM／GPU／TEMP 四项 `--`，真实 PC 数据属于节点 11；`Tools` 提供真实 Wi-Fi 状态、System Info 和 About；`Settings` 提供 Wi-Fi 配网／自动连接／忘记网络，以及只读的 Display、Sound、System 页面，其中 `sound_enabled` 要等节点 12 才会产生业务效果。App Framework、Navigation、Launcher 与全局 Wi-Fi 图标位于 `main/framework/`，Settings Service 与 Wi-Fi Service 位于 `main/services/`。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是占位 App；`PC Monitor` 通过固件 Agent Service 每秒拉取电脑端 `pc-agent/` 的真实 CPU／RAM／GPU／温度快照并刷新（3 秒无有效数据自动恢复 `--`；节点 11 的构建、烧录与 CP5 手动验收已由项目负责人确认通过，未提供新增日志），Agent 地址由被忽略的本地 `sdkconfig` 配置，可提交配置为空时显示 `--`；`Tools` 提供真实 Wi-Fi 状态、System Info 和 About；`Settings` 提供 Wi-Fi 配网／自动连接／忘记网络，以及只读的 Display、Sound、System 页面，其中 `sound_enabled` 要等节点 12 才会产生业务效果。App Framework、Navigation、Launcher 与全局 Wi-Fi 图标位于 `main/framework/`，Settings Service、Wi-Fi Service 与 Agent Service 位于 `main/services/`。
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，双全屏 DMA 缓冲（原设计为三重；加入 Wi-Fi 后内部 DMA 内存不足，2026-09-21 确认改为双缓冲，60 MHz SPI 下仍满足 60fps），稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。
 - ESP32 侧固件已包含并完成实机验证的 Wi-Fi Service：进入 `Settings → Wi-Fi` 可启动配网，设备会开启受密码保护的临时热点 `Xiaomiao-XXXX`（密码每次会话随机生成），手机连接后在浏览器打开 `http://192.168.4.1` 选网并输入密码；凭据只在试连成功取得 IPv4 后才会保存，密码错误或超时不会覆盖原有网络。保存后支持开机自动连接与断线退避重连，`Configure` 可更换网络，`Forget network` 只删除 Wi-Fi 凭据。`Tools → Wi-Fi` 显示真实的连接状态、SSID、信号档位与 IPv4 地址，屏幕右上角在所有页面显示四档 Wi-Fi 状态图标。详细验证记录见 `goals/20260920-2210-wifi-service.md`。
 - GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现下文所述的 I2C `0x40` LED、电机从机协议。
 - ESP32 侧已经按原有 `0x40` 协议实现 LED、电机命令；该协议与 GD32 实机固件的联调状态仍待确认。欢迎大家测试或在 Issues 里提出建议。
+
+## PC Agent（电脑端，节点 11）
+
+设备上的 PC Monitor 数据来自运行在电脑上的统一 `Xiaomiao Agent`（`pc-agent/`，Python 3，仅标准库 + `psutil`，GPU 优先 `nvidia-smi`）：
+
+```powershell
+python -m venv pc-agent/.venv
+pc-agent/.venv/Scripts/python -m pip install -r pc-agent/requirements.txt
+pc-agent/.venv/Scripts/python pc-agent/monitor.py            # 默认 0.0.0.0:8766
+```
+
+- API：`GET /api/v1/health`、`GET /api/v1/pc/metrics`；HTTP 只读取后台缓存快照，不在请求路径中现场采集。
+- 固件侧地址通过 `CONFIG_XIAOMIAO_AGENT_HOST`（IPv4 文本）与 `CONFIG_XIAOMIAO_AGENT_PORT`（默认 8766）配置；请在被忽略的本地 `sdkconfig` 中设置真实地址，仓库默认配置保持为空。
+- Agent 需与设备处于同一局域网；Windows 防火墙只放行“专用网络”，不要把端口映射到公网。该 Agent 首版无 TLS 与鉴权，仅面向可信局域网。
+- GPU 与温度依赖本机硬件：无 NVIDIA GPU 或温度源时对应字段为 `null`，设备显示 `--`，属正常降级。
+- 服务商 AI 额度等后续能力将复用同一 Agent 与 `/api/v1/...` 路由，尚未实现。
 
 ## 开发文档导航
 

@@ -61,6 +61,7 @@
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
 #include "framework/xiaomiao_wifi_indicator.h"
+#include "services/xiaomiao_agent_service.h"
 #include "services/xiaomiao_settings_service.h"
 #include "services/xiaomiao_wifi_service.h"
 
@@ -2716,6 +2717,19 @@ void app_main(void)
     if (wifi_err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi service unavailable: %s (0x%x), continuing offline",
                  esp_err_to_name(wifi_err), (unsigned)wifi_err);
+    }
+
+    /*
+     * The Agent Service follows the Wi-Fi Service and reuses its
+     * connection snapshot for every fetch (goal node 11, "Worker
+     * scheduling"). It never waits for Wi-Fi, HTTP or the first PC
+     * sample: an unconfigured or unreachable Agent only means the PC
+     * Monitor keeps its `--` placeholders while everything else works.
+     */
+    esp_err_t agent_err = xiaomiao_agent_service_init();
+    if (agent_err != ESP_OK) {
+        ESP_LOGW(TAG, "Agent service unavailable: %s (0x%x), continuing without PC metrics",
+                 esp_err_to_name(agent_err), (unsigned)agent_err);
     }
 
     sensor_history_init();

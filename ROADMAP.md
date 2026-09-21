@@ -7,14 +7,14 @@
 ## 当前状态
 
 - 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
-- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
+- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，I2C `0x40` LED／电机从机协议未实现。
 - Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，Tools 的 Wi-Fi 页显示真实连接状态。
 
 ## 当前开发节点
 
-- **节点 0～10 均已完成并实机验证。** 每个节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
+- **节点 0～11 均已完成并取得人工验收确认。** 节点 11 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 手动场景全部通过；Agent 未重复执行固件构建、烧录或串口监视，且未收到新增日志。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
 
   | 节点 | 施工文档 |
   | --- | --- |
@@ -29,6 +29,9 @@
   | 8 Settings UI | `goals/20260920-1338-settings-ui.md` |
   | 9 Settings Service 与 NVS | `goals/20260920-1429-settings-service-nvs.md` |
   | 10 Wi-Fi Service | `goals/20260920-2210-wifi-service.md` |
+  | 11 PC Monitor 通信 | `goals/20260921-1238-pc-monitor-communication.md` |
+
+- 节点 11“PC Monitor 通信”已于 2026-09-21 完成（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：一个统一 Python HTTP Agent（`pc-agent/`，固定 IPv4、端口 `8766`，仅 `/api/v1/health` 与 `/api/v1/pc/metrics`）+ 固件通用 Agent Service（`main/services/xiaomiao_agent_service.{h,c}`，Kconfig 固定地址、Worker、响应上限、JSON 校验、3 秒失效）+ PC Monitor 接入（两页指标与滚动图、LVGL timer 每秒读快照刷新 CPU／RAM／GPU／温度，温度行按 GPU T／CPU T／TEMP 切换）。PC Agent 的 Python 单测 18/18 通过，固件静态复核通过；项目负责人确认固件构建、烧录与 CP5 手动场景全部通过，未提供新增日志。服务发现、AI 额度路由和其他 PC 数据端点不在本节点实现。
 
 - 未验证项汇总（均已在各自 Goal 中判定为不阻塞收口）：LED、电机、MPU6050 的实机行为无证据（等节点 16 的 GD32 `0x40` 协议）；节点 9 的 `nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不改分区表的前提下构造，只按源码检查确认；节点 8 与节点 9 的末轮回归为人工口头确认，无补充串口日志。
 - Launcher 导航改为网格 + 右键翻页（2026-09-20，非设计文档第 15 节的有序节点）：**已完成**。`←`／`→` 在行内换列，在右列按 `→` 翻到下一页同一行第一格、在左列按 `←` 翻回上一页同一行第二格；目标页没有对应行时回退到该页第一行第一格，只有目标页没有任何 App 才保持焦点（因此 5 个 App 时第 1 页第 2 行也能进入第 2 页）；`↑`／`↓` 在页内换行且不翻页。每页 4 格时从第 1 格按 `→` 两次即翻页。网格几何、每页容量、槽位的行优先对应关系、卡片布局与配色均未改。实机验证：自测固件输出 `LAUNCHER_SELF_TEST: PASS`（引导路径 13 步，数量边界含缺行回退断言），普通固件实机行为与五个 App、Hardware Test 15 页由人工确认无问题（无补充串口日志）。本变更经三次模型修订（首版“左右线性 ±1 且删掉上下键”→ “外侧列翻页 + 上下换行” → “翻页保持同一行” → 最终“同行优先、缺行回退”），施工文档为 `goals/20260920-2015-launcher-lr-paging.md`。
@@ -50,7 +53,7 @@
 - [x] 节点 8：Settings UI。
 - [x] 节点 9：Settings Service 与 NVS。
 - [x] 节点 10：Wi-Fi Service。
-- [ ] 节点 11：PC Monitor 通信。
+- [x] 节点 11：PC Monitor 通信。
 - [ ] 节点 12：Audio Service。
 - [ ] 节点 13：首个正式游戏。
 - [ ] 节点 14：Storage Service。
@@ -59,12 +62,11 @@
 
 ## 下一步
 
-1. **节点 11“PC Monitor 通信”尚未立项**，是下一个有序开发节点；它应复用节点 10 已完成的 Wi-Fi Service 和连接状态，定义 PC 数据协议并把真实 CPU／RAM／GPU／温度指标接入现有 PC Monitor UI。
-2. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
-3. 按需另立任务定位 SD／GPIO22 配置冲突（见下节“待确认与已知风险”）。
-4. 可选补录（均不影响已完成节点的结论，固件已在板上，重新 `idf.py -p COM5 monitor` 即可，无需重新编译或烧录）：节点 4 缺失设备页的实际显示文本与挂载失败后重新进入 App 的行为；节点 5 的“连续 10 轮”与“5 轮双 App 交替”样本；节点 8 与节点 9 末轮回归的补充串口日志。
-5. 已实现的设计约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行，`lv_indev_set_long_press_time()` 全局设置未改；Launcher 的“App 打开态转发 B”分支对已取得输入焦点的 App 不可达。细节见 `goals/20260920-1053-hardware-test-app.md` 与 `goals/20260920-1159-games-placeholder.md`。
-6. **UI 中文本地化尚未立项**，建议排在节点 15「Assets 与文件系统」之后（或作为其第二阶段）；字库体积、字号与两条加载路径见下节「待确认与已知风险」。
+1. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
+2. 按需另立任务定位 SD／GPIO22 配置冲突（见下节“待确认与已知风险”）。
+3. 可选补录（均不影响已完成节点的结论，固件已在板上，重新 `idf.py -p COM5 monitor` 即可，无需重新编译或烧录）：节点 4 缺失设备页的实际显示文本与挂载失败后重新进入 App 的行为；节点 5 的“连续 10 轮”与“5 轮双 App 交替”样本；节点 8 与节点 9 末轮回归的补充串口日志。
+4. 已实现的设计约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行，`lv_indev_set_long_press_time()` 全局设置未改；Launcher 的“App 打开态转发 B”分支对已取得输入焦点的 App 不可达。细节见 `goals/20260920-1053-hardware-test-app.md` 与 `goals/20260920-1159-games-placeholder.md`。
+5. **UI 中文本地化尚未立项**，建议排在节点 15「Assets 与文件系统」之后（或作为其第二阶段）；字库体积、字号与两条加载路径见下节「待确认与已知风险」。
 
 ## 待确认与已知风险
 
@@ -76,7 +78,7 @@
 - **MicroSD／GPIO22 冲突未定位根因**：`PIN_NUM_SD_CS = GPIO_NUM_22`，按 A 挂载时报 `sdmmc_card_init failed` 与 `gpio: conflict found for GPIO[22]`，2026-09-20 实机复现两次（按 A 共 5 次失败 5 次）。两次均未阻塞启动、进入与返回，符合设计文档第 9 节“失败则 SD_UNAVAILABLE、记录日志、继续启动 Launcher”的既定策略；但第二次及后续尝试在挂载前即报冲突，提示 CS 引脚未被上一次失败释放，需另立任务定位。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用，但 GD32 工程缺少对应实现，双 MCU 联调结果待确认。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
-- PC Monitor 的指标当前为编译期占位，真实数据与通信属节点 11，尚未开始。
+- PC Monitor 的指标已接入节点 11 的 Agent Service 快照：真实数据需在被忽略的本地 `sdkconfig` 配置 Agent IPv4、PC 端启动 `pc-agent/` 并与设备同处一个局域网；可提交配置地址为空，固件在该状态显示 `--` 且不受影响。节点 11 的 CP5 已由项目负责人确认通过；该确认未附新增串口日志、截图或资源数值。首版固定 Agent IPv4，不支持服务发现；后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。
 
 ## 历史记录
 

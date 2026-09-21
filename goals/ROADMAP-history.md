@@ -6,6 +6,9 @@
 
 ## 施工记录
 
+- 2026-09-21 16:33 -- 节点 11 收尾完成：PC Agent 自动化测试更新为 18/18，通过固件静态复核；项目负责人确认 ESP-IDF 构建、烧录与 CP5 手动场景全部通过。Agent 未重复执行固件构建、烧录或串口监视，人工确认未附新增日志、截图或资源数值；不可构造的底层分配／网络栈故障仍按源码检查记录。状态：已完成。→ `goals/20260921-1238-pc-monitor-communication.md`
+- 2026-09-21 12:42 后 -- 实施节点 11 全部代码（CP1～CP4）：新增 `pc-agent/`（monitor.py、pc_metrics.py、requirements.txt 固定 `psutil>=7.0,<8`、两个测试文件，17/17 通过）、`main/Kconfig.projbuild`（HOST 默认空、PORT 8766）、`main/services/xiaomiao_agent_service.{h,c}`、`main/main.c` 启动链接入、`main/apps/pc_monitor/xiaomiao_pc_monitor.c` 接入 LVGL timer 快照刷新、CMake 与 `sdkconfig.defaults` 更新。静态复核：括号配平／空白／分层边界（App 不碰 HTTP/Wi-Fi/cJSON/NVS）／资源释放／敏感字面量全部通过。口径差异（HTTP 无独立连接超时、ok 示例与判定文字矛盾按文字为准、可选字段类型错误按降级处理、Worker 栈 4096、age_sec≥3.0 拒绝）与未验证范围（全部固件行为、Agent 实机链路、栈高水位）记录于 Goal 实施记录。状态：已实施，待人工验证（CP5）。→ `goals/20260921-1238-pc-monitor-communication.md`
+- 2026-09-21 12:38 -- 创建节点 11“统一 Agent 基线与 PC Monitor 通信”施工文档并立项：固定一个 Python HTTP Agent、固定 IPv4 + 端口 `8766`、`/api/v1/health` 与 `/api/v1/pc/metrics`、固件 Agent Service、CPU／RAM／GPU／温度快照及 3 秒失效语义；服务发现、AI 额度和其他 PC 数据端点不在本节点实现。状态：已立项，尚未实施。→ `goals/20260921-1238-pc-monitor-communication.md`
 - 2026-09-21 11:49 -- 节点 10 收尾完成：项目负责人确认人工构建、烧录及手动测试全部通过；Agent 同步 Goal、README、项目概览、AGENTS 与 ROADMAP，并在最终静态审查中修正 NVS 提交失败仍提前替换运行时凭据和关闭配网页的问题。状态：已完成。→ `goals/20260920-2210-wifi-service.md`
 - 2026-09-21 — 节点 10「更换网络」功能闭合：以正确密码试连真正不同的网络 `CMCC-5pu4`（信道 6、bssid 与旧网络不同）1.6 秒连上并保存，`POWERON_RESET` 真断电重启后 `saved network loaded, ssid='CMCC-5pu4'` → 自动连上新网络并取得 IP——新凭据跨断电存活且替换旧凭据。同时判定「错误密码不覆盖旧凭据」通过（写 NVS 唯一入口以取得 IPv4 为门控、失败试连从不落盘）。路由器级断线重连与 10 分钟空闲超时完成代码复核、无缺陷，连同图标三态由负责人决定暂缓。→ `goals/20260920-2210-wifi-service.md`
 

@@ -1,0 +1,23 @@
+menu "Xiaomiao Agent"
+
+    config XIAOMIAO_AGENT_HOST
+        string "Xiaomiao Agent IPv4 address"
+        default ""
+        help
+            IPv4 text of the PC running the unified Xiaomiao Agent
+            (four dotted decimal groups, e.g. 192.168.1.x). An empty
+            string means unconfigured: the Agent Service stays in
+            UNCONFIGURED and never sends requests. The reproducible
+            configuration keeps this empty on purpose; put the real
+            LAN address only into the ignored local sdkconfig (goal
+            node 11, decision 3).
+
+    config XIAOMIAO_AGENT_PORT
+        int "Xiaomiao Agent TCP port"
+        range 1 65535
+        default 8766
+        help
+            TCP port of the Xiaomiao Agent HTTP backend. The PC Agent
+            defaults to the same port 8766 (goal node 11, decision 1).
+
+endmenu
