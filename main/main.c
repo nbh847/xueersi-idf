@@ -13,7 +13,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
 #include <unistd.h>
@@ -21,7 +20,6 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/ledc.h"
-#include "driver/sdspi_host.h"
 #include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_chip_info.h"
@@ -31,13 +29,10 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
-#include "sdmmc_cmd.h"
 #include "sdkconfig.h"
-#include "vfs_fat_internal.h"
 
 #if XIAOMIAO_FRAMEWORK_SELF_TEST
 #include "framework/xiaomiao_framework_selftest.h"
@@ -65,6 +60,7 @@
 #include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_agent_service.h"
 #include "services/xiaomiao_settings_service.h"
+#include "services/xiaomiao_storage_service.h"
 #include "services/xiaomiao_wifi_service.h"
 
 #ifndef CONFIG_IDF_TARGET
@@ -285,7 +281,6 @@ typedef struct {
     bool i2c_ready;
     bool gd32_present;
     bool mpu_present;
-    bool sd_mounted;
     bool buzzer_ready;
     bool adc_ready;
     bool ext_pwm_ready;
@@ -306,12 +301,9 @@ typedef struct {
     float pitch;
     float roll;
     char gesture[12];
-    char sd_name[24];
-    uint32_t sd_mb;
     esp_err_t last_adc_err;
     esp_err_t last_gd32_err;
     esp_err_t last_mpu_err;
-    esp_err_t last_sd_err;
     char action[32];
 } board_state_t;
 
@@ -353,10 +345,8 @@ static uint8_t s_lcd_draw_buf_count = LCD_DRAW_BUF_COUNT;
 static ui_state_t s_ui;
 static board_state_t s_board = {
     .gesture = "ABSENT",
-    .sd_name = "NO CARD",
     .motor_speed = {120, 120},
     .ext_pwm = {128, 128},
-    .last_sd_err = ESP_ERR_NOT_FOUND,
     .action = "Ready",
 };
 
@@ -365,7 +355,6 @@ static esp_lcd_panel_io_handle_t s_lcd_io_handle;
 static i2c_master_bus_handle_t s_i2c_bus;
 static i2c_master_dev_handle_t s_gd32_dev;
 static i2c_master_dev_handle_t s_mpu_dev;
-static sdmmc_card_t *s_sd_card;
 static uint32_t s_buzzer_stop_at;
 static uint32_t s_buzzer_freq_hz = 988;
 static uint32_t s_action_until_ms;
@@ -800,121 +789,6 @@ static void hardware_update(void)
     s_board.samples++;
 }
 
-static void sd_revoke_cs_ownership(void)
-{
-    /* IDF 6.1 sdspi deinit_slot() configures CS as input but does not revoke
-     * its GPIO ownership. Revoke it before every host cleanup or retry. */
-    (void)gpio_reset_pin(PIN_NUM_SD_CS);
-}
-
-static void sd_release_mount_resources(sdspi_dev_handle_t sd_handle, sdmmc_card_t *card)
-{
-    /* This must happen before sdspi_host_remove_device(): its deinit path
-     * calls gpio_config() on CS before the driver releases the GPIO. */
-    sd_revoke_cs_ownership();
-    if (sd_handle >= 0) {
-        (void)sdspi_host_remove_device(sd_handle);
-    }
-    free(card);
-}
-
-static void sd_try_mount(void)
-{
-    if (s_board.sd_mounted) {
-        return;
-    }
-
-    /* Clear ownership left by a previous failed attempt before configuring
-     * the next SDSPI device. */
-    sd_revoke_cs_ownership();
-
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = LCD_HOST;
-    host.max_freq_khz = SD_SPI_MAX_FREQ_KHZ;
-
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.host_id = LCD_HOST;
-    slot_config.gpio_cs = PIN_NUM_SD_CS;
-    slot_config.wait_for_miso = 20;
-
-    esp_vfs_fat_mount_config_t mount_config = VFS_FAT_MOUNT_DEFAULT_CONFIG();
-    mount_config.format_if_mount_failed = false;
-    mount_config.max_files = 3;
-
-    sdmmc_card_t *card = malloc(sizeof(*card));
-    sdspi_dev_handle_t sd_handle = -1;
-    esp_err_t err = card ? ESP_OK : ESP_ERR_NO_MEM;
-
-    if (err == ESP_OK) {
-        err = (*host.init)();
-    }
-    if (err == ESP_OK) {
-        err = sdspi_host_init_device(&slot_config, &sd_handle);
-    }
-    if (err == ESP_OK) {
-        sdmmc_host_t card_host = host;
-        card_host.slot = sd_handle;
-        err = sdmmc_card_init(&card_host, card);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "sdmmc_card_init failed (0x%x)", err);
-        }
-    }
-    if (err == ESP_OK) {
-        err = esp_vfs_fat_mount_initialized(card, "/sdcard", &mount_config);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "esp_vfs_fat_mount_initialized failed (0x%x)", err);
-        }
-    }
-
-    if (err != ESP_OK) {
-        if (card) {
-            sd_release_mount_resources(sd_handle, card);
-        }
-        s_board.last_sd_err = err;
-        s_board.sd_mounted = false;
-        s_sd_card = NULL;
-        copy_text(s_board.sd_name, sizeof(s_board.sd_name), "NO CARD");
-        s_board.sd_mb = 0;
-        return;
-    }
-
-    s_board.last_sd_err = ESP_OK;
-    s_sd_card = card;
-    s_board.sd_mounted = true;
-    memset(s_board.sd_name, 0, sizeof(s_board.sd_name));
-    memcpy(s_board.sd_name,
-           s_sd_card->cid.name,
-           MIN(sizeof(s_sd_card->cid.name), sizeof(s_board.sd_name) - 1));
-    s_board.sd_mb = (uint32_t)(((uint64_t)s_sd_card->csd.capacity * s_sd_card->csd.sector_size) / (1024 * 1024));
-}
-
-static esp_err_t sd_unmount(void)
-{
-    esp_err_t err = ESP_ERR_NOT_FOUND;
-
-    if (s_board.sd_mounted && s_sd_card) {
-        sd_revoke_cs_ownership();
-        err = esp_vfs_fat_sdcard_unmount("/sdcard", s_sd_card);
-        if (err != ESP_OK) {
-            s_board.last_sd_err = err;
-            set_action("SD unmount fail");
-            return err;
-        }
-    }
-    else {
-        set_action("No SD card");
-        s_board.last_sd_err = err;
-        return err;
-    }
-
-    s_board.sd_mounted = false;
-    s_sd_card = NULL;
-    copy_text(s_board.sd_name, sizeof(s_board.sd_name), "NO CARD");
-    s_board.sd_mb = 0;
-    s_board.last_sd_err = ESP_ERR_NOT_FOUND;
-    set_action("SD unmounted");
-    return ESP_OK;
-}
 
 static void adc_init(void)
 {
@@ -2007,17 +1881,21 @@ static void ui_refresh(void)
         ui_set_bar((int)s_board.motor_speed[motor] * 100 / 255);
         break;
     }
-    case UI_PAGE_SD:
-        lv_label_set_text(s_ui.value, s_board.sd_mounted ? "MOUNTED" : "NO CARD");
-        if (s_board.sd_mounted) {
-            lv_label_set_text_fmt(s_ui.sub, "%s  %luMB", s_board.sd_name, (unsigned long)s_board.sd_mb);
+    case UI_PAGE_SD: {
+        xiaomiao_storage_snapshot_t sd;
+        xiaomiao_storage_get_snapshot(&sd);
+        lv_label_set_text(s_ui.value, sd.mounted ? "MOUNTED" : "NO CARD");
+        if (sd.mounted) {
+            lv_label_set_text_fmt(s_ui.sub, "%s  %luMB", sd.card_name,
+                                  (unsigned long)(sd.capacity_bytes / (1024ULL * 1024ULL)));
         }
         else {
-            lv_label_set_text_fmt(s_ui.sub, "GPIO22 CS  %s", short_err(s_board.last_sd_err));
+            lv_label_set_text_fmt(s_ui.sub, "GPIO22 CS  %s", short_err(sd.last_error));
         }
-        ui_set_hint(s_board.sd_mounted ? "B unmount  L/R" : "A rescan   L/R");
-        ui_set_bar(s_board.sd_mounted ? 100 : 0);
+        ui_set_hint(sd.mounted ? "B unmount  L/R" : "A rescan   L/R");
+        ui_set_bar(sd.mounted ? 100 : 0);
         break;
+    }
     case UI_PAGE_GPIO25:
         lv_label_set_text_fmt(s_ui.value, "%s %03u", s_board.ext_out[0] ? "PWM" : "OFF", s_board.ext_pwm[0]);
         lv_label_set_text(s_ui.sub, s_board.ext_pwm_ready ? "GPIO25 LEDC" : "PWM INIT FAIL");
@@ -2163,11 +2041,11 @@ static void ui_action(void)
         ui_motor_toggle(1);
         err = s_board.last_gd32_err;
         break;
-    case UI_PAGE_SD:
-        sd_try_mount();
-        err = s_board.sd_mounted ? ESP_OK : s_board.last_sd_err;
-        set_action(s_board.sd_mounted ? "SD mounted" : "No SD card");
+    case UI_PAGE_SD: {
+        err = xiaomiao_storage_mount();
+        set_action(err == ESP_OK ? "SD mounted" : "No SD card");
         break;
+    }
     case UI_PAGE_GPIO25:
         err = ui_ext_toggle(0);
         break;
@@ -2220,9 +2098,19 @@ static void ui_cancel(void)
         buzzer_stop();
         set_action("Buzzer stop");
         break;
-    case UI_PAGE_SD:
-        sd_unmount();
+    case UI_PAGE_SD: {
+        esp_err_t unmount_err = xiaomiao_storage_unmount();
+        if (unmount_err == ESP_OK) {
+            set_action("SD unmounted");
+        }
+        else if (unmount_err == ESP_ERR_NOT_FOUND) {
+            set_action("No SD card");
+        }
+        else {
+            set_action("SD unmount fail");
+        }
         break;
+    }
     case UI_PAGE_GPIO25:
         {
             esp_err_t err = ext_output_set(0, false);
@@ -2787,6 +2675,26 @@ void app_main(void)
     buttons_init();
 
     esp_lcd_panel_io_handle_t io_handle = lcd_init();
+
+    /*
+     * The Storage Service owns the whole MicroSD lifecycle and comes up
+     * right after lcd_init(), because the shared SPI2 bus only exists
+     * from that point on (goal node 14, decision 4). A failed first
+     * mount - no card, no response, unsupported filesystem - only
+     * costs the card: the boot continues into the Launcher and the
+     * Hardware Test MicroSD page can retry with A at any time.
+     */
+    const xiaomiao_storage_config_t storage_config = {
+        .host_id = LCD_HOST,
+        .cs_gpio = PIN_NUM_SD_CS,
+        .max_freq_khz = SD_SPI_MAX_FREQ_KHZ,
+    };
+    esp_err_t storage_err = xiaomiao_storage_service_init(&storage_config);
+    if (storage_err != ESP_OK) {
+        ESP_LOGW(TAG, "Storage service unavailable: %s (0x%x), continuing without SD",
+                 esp_err_to_name(storage_err), (unsigned)storage_err);
+    }
+
     hardware_init();
 
     lv_init();

@@ -298,12 +298,14 @@ Hardware Test
 
 ## 9. SD 卡策略
 
-当前运行日志存在：
+早期运行日志曾出现：
 
 ``` text
 sdmmc_card_init failed
 gpio: conflict found for GPIO[22]
 ```
+
+其中 GPIO22 冲突警告的根因已定位为 ESP-IDF 6.1 SDSPI 失败清理时的 GPIO 占用位图泄漏。固件现已手动拆分 SDSPI 初始化与 FATFS 挂载，在失败清理和成功卸载时先复位 GPIO22，再移除 SDSPI 设备；2026-09-21 连续 9 次 `sdmmc_card_init failed (0x107)` 实机重试均未再出现冲突警告。节点 14 又于 2026-09-22 完成正常卡挂载、卸载、重新挂载、带卡冷启动及连续 10 次无卡重试，确认无卡时的 `0x107` 是卡不响应超时，不是共享 SPI 总线问题。
 
 v0.1 不将 SD 卡作为系统启动的必需条件。
 
@@ -335,7 +337,7 @@ storage_service_init()
 -   文件管理器
 -   用户下载内容
 
-届时再重点解决 SD 驱动和 GPIO 冲突。
+节点 14 已在现有驱动修复基础上完成 Storage Service 分层与实机验收。MicroSD 生命周期现由 `main/services/xiaomiao_storage_service.{h,c}` 统一管理，固定挂载点为 `/sdcard`，失败不阻塞 Launcher；Hardware Test 通过 Service 快照及挂载／卸载接口操作，不再直接持有 SDSPI 或 FATFS 资源。
 
 ## 10. FreeRTOS 策略
 

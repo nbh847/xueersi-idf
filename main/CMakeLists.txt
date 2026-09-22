@@ -9,15 +9,17 @@ set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
                    "framework/xiaomiao_launcher.c"
                    "framework/xiaomiao_wifi_indicator.c")
 
-# System Services (goal nodes 9, 10 and 11). The Settings Service owns
+# System Services (goal nodes 9, 10, 11 and 14). The Settings Service owns
 # the persisted configuration, the Wi-Fi Service owns the whole network
-# lifecycle including the provisioning page, and the Agent Service owns
-# the HTTP link to the PC Agent; Apps only see their public interfaces.
+# lifecycle including the provisioning page, the Agent Service owns
+# the HTTP link to the PC Agent, and the Storage Service owns the
+# MicroSD lifecycle; Apps only see their public interfaces.
 set(SERVICE_SRCS "services/xiaomiao_settings_service.c"
                  "services/xiaomiao_wifi_service.c"
                  "services/xiaomiao_wifi_provisioning.c"
                  "services/xiaomiao_wifi_dns.c"
-                 "services/xiaomiao_agent_service.c")
+                 "services/xiaomiao_agent_service.c"
+                 "services/xiaomiao_storage_service.c")
 
 # Business Apps. The self test builds keep their own test data and never
 # register these descriptions (goal node 5, decision 14).

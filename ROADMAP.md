@@ -14,7 +14,7 @@
 
 ## 当前开发节点
 
-- **节点 0～11 均已完成并取得人工验收确认。** 节点 11 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 手动场景全部通过；Agent 未重复执行固件构建、烧录或串口监视，且未收到新增日志。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
+- **节点 0～11 与节点 14 均已完成并取得人工验收确认。** 节点 14 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 九个实机场景全部通过（2026-09-22 15:38）；Agent 未重复执行固件构建、烧录或串口监视。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
 
   | 节点 | 施工文档 |
   | --- | --- |
@@ -30,10 +30,12 @@
   | 9 Settings Service 与 NVS | `goals/20260920-1429-settings-service-nvs.md` |
   | 10 Wi-Fi Service | `goals/20260920-2210-wifi-service.md` |
   | 11 PC Monitor 通信 | `goals/20260921-1238-pc-monitor-communication.md` |
+  | 14 Storage Service | `goals/20260922-0938-storage-service.md` |
 
 - 节点 11“PC Monitor 通信”已于 2026-09-21 完成（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：一个统一 Python HTTP Agent（`pc-agent/`，固定 IPv4、端口 `8766`，仅 `/api/v1/health` 与 `/api/v1/pc/metrics`）+ 固件通用 Agent Service（`main/services/xiaomiao_agent_service.{h,c}`，Kconfig 固定地址、Worker、响应上限、JSON 校验、3 秒失效）+ PC Monitor 接入（两页指标与滚动图、LVGL timer 每秒读快照刷新 CPU／RAM／GPU／温度，温度行按 GPU T／CPU T／TEMP 切换）。PC Agent 的 Python 单测 18/18 通过，固件静态复核通过；项目负责人确认固件构建、烧录与 CP5 手动场景全部通过，未提供新增日志。服务发现、AI 额度路由和其他 PC 数据端点不在本节点实现。
 
-- MicroSD GPIO22 冲突修复已于 2026-09-21 21:56 通过人工复测：连续 9 次 `sdmmc_card_init failed (0x107)` 均未再出现 `gpio: conflict found for GPIO[22]`，Hardware Test 关闭、重开和返回 Launcher 正常。正常 SD 卡挂载尚未验证，节点 14 仍保持未完成。
+- 节点 14“Storage Service”已于 2026-09-22 完成（施工文档 `goals/20260922-0938-storage-service.md`）：MicroSD 生命周期迁到独立 `main/services/xiaomiao_storage_service.{h,c}`，`main/main.c` 启动链在 `lcd_init()` 后自动尝试首次挂载，Hardware Test MicroSD 页改用 Service 快照与挂载／卸载接口。CP5 九个实机场景全部通过（2026-09-22 15:38）：无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功（屏幕 MOUNTED + SD 29818MB）、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归。`cmd=5 R1 illegal command` 确认为 IDF v6.1 `sdmmc_init.c` 标准 SDIO 探测步骤、microSD 拒绝 CMD5 属预期正常；无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）为卡不响应的预期行为，与共享 SPI 总线问题已区分。
+- MicroSD GPIO22 冲突修复已于 2026-09-21 21:56 通过人工复测并在节点 14 再次确认：连续 9 次 `sdmmc_card_init failed (0x107)` 均未再出现 `gpio: conflict found for GPIO[22]`，节点 14 的 10 次无卡重试同样无冲突。历史 Goal 与流水保留故障演进记录，不再把 GPIO22 冲突列为当前未解决问题。
 
 - 未验证项汇总（均已在各自 Goal 中判定为不阻塞收口）：LED、电机、MPU6050 的实机行为无证据（等节点 16 的 GD32 `0x40` 协议）；节点 9 的 `nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不改分区表的前提下构造，只按源码检查确认；节点 8 与节点 9 的末轮回归为人工口头确认，无补充串口日志。
 - Launcher 导航改为网格 + 右键翻页（2026-09-20，非设计文档第 15 节的有序节点）：**已完成**。`←`／`→` 在行内换列，在右列按 `→` 翻到下一页同一行第一格、在左列按 `←` 翻回上一页同一行第二格；目标页没有对应行时回退到该页第一行第一格，只有目标页没有任何 App 才保持焦点（因此 5 个 App 时第 1 页第 2 行也能进入第 2 页）；`↑`／`↓` 在页内换行且不翻页。每页 4 格时从第 1 格按 `→` 两次即翻页。网格几何、每页容量、槽位的行优先对应关系、卡片布局与配色均未改。实机验证：自测固件输出 `LAUNCHER_SELF_TEST: PASS`（引导路径 13 步，数量边界含缺行回退断言），普通固件实机行为与五个 App、Hardware Test 15 页由人工确认无问题（无补充串口日志）。本变更经三次模型修订（首版“左右线性 ±1 且删掉上下键”→ “外侧列翻页 + 上下换行” → “翻页保持同一行” → 最终“同行优先、缺行回退”），施工文档为 `goals/20260920-2015-launcher-lr-paging.md`。
@@ -58,14 +60,14 @@
 - [x] 节点 11：PC Monitor 通信。
 - [ ] 节点 12：Audio Service。（已推迟，2026-09-21 确认后面再做，等有真实消费者再启动）
 - [ ] 节点 13：首个正式游戏。（已推迟，2026-09-21 确认不在本设备做游戏）
-- [ ] 节点 14：Storage Service。
+- [x] 节点 14：Storage Service。
 - [ ] 节点 15：Assets 与文件系统。
 - [ ] 节点 16：GD32 `0x40` 协议补全。
 
 ## 下一步
 
 1. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
-2. **GPIO22 冲突修复已人工验证通过（2026-09-21 21:56）**：连续 9 次 `sdmmc_card_init failed (0x107)` 均无 GPIO22 冲突警告，Hardware Test 生命周期也正常。仍需插入已知良好 SD 卡验证 `MOUNTED`，以区分 `0x107` 是未插卡预期行为还是共享 SPI 总线问题。
+2. 下一个有序节点是节点 15「Assets 与文件系统」，可复用节点 14 的 Storage Service 挂载点 `/sdcard` 与已预留的 1.5 MB `assets` 分区；节点 12（Audio Service）与节点 13（首个正式游戏）已推迟。
 3. 可选补录（均不影响已完成节点的结论，固件已在板上，重新 `idf.py -p COM5 monitor` 即可，无需重新编译或烧录）：节点 4 缺失设备页的实际显示文本与挂载失败后重新进入 App 的行为；节点 5 的“连续 10 轮”与“5 轮双 App 交替”样本；节点 8 与节点 9 末轮回归的补充串口日志。
 4. 已实现的设计约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行，`lv_indev_set_long_press_time()` 全局设置未改；Launcher 的“App 打开态转发 B”分支对已取得输入焦点的 App 不可达。细节见 `goals/20260920-1053-hardware-test-app.md` 与 `goals/20260920-1159-games-placeholder.md`。
 5. **UI 中文本地化尚未立项**，建议排在节点 15「Assets 与文件系统」之后（或作为其第二阶段）；字库体积、字号与两条加载路径见下节「待确认与已知风险」。
@@ -77,7 +79,7 @@
 - **Flash 与 PSRAM 容量已核对（2026-09-21）**：`esptool flash-id` 读出 `Manufacturer 20 / Device 4016 / 4MB`，芯片为 ESP32-D0WD rev v1.0；`Tools → System Info` 同时给出运行时读数 `Flash 4 MiB`，两条独立路径一致。**PSRAM 运行时可用量为 4 MiB**，而设计文档写的是 8 MB——这不是模块缺容量，而是 ESP32 的 PSRAM 映射窗口上限即 4 MB（8 MB 颗粒也只能用到 4 MB，除非做 bank 切换，IDF 默认不做）；后续规划大体积资源（字库、音频、Assets）时按 4 MiB 计算。4 MB Flash 中约 2.41 MB 未进分区表，可用于扩分区或新建 data 分区。另注：`Tools → System Info` 的 `CPU` 行打印的是 `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ` 配置值而非运行时测量值。
 - **节点 10 内部 RAM 预算偏紧（已确认取舍）**：Wi-Fi 驱动与 LCD 的全屏 DMA 缓冲共用内部 RAM（ESP32 的 SPI DMA 不能寻址 PSRAM），三块 40 KB 缓冲与 Wi-Fi 相加放不下，2026-09-21 实测第三块分配失败。已采取两项措施（Wi-Fi／LWIP 缓冲优先进 PSRAM、第三块失败时降级为双缓冲），并确认接受双缓冲。当前显示为 2 块全屏缓冲，代码仍保留“尝试第三块、失败降级”的自适应写法。内部内存余量仍然不大：后续若要恢复三缓冲、或再叠加 Service 与大缓冲，需先核算内部 RAM 并重新评估。
 - **配网热点的已接受行为**：热点 SSID 固定为 `Xiaomiao-XXXX`，密码每次会话随机生成。手机若缓存过同名热点的旧密码，首次关联会使用旧密码并失败，需要重新输入设备屏幕上的本次密码。该行为是固定 SSID 与随机密码安全要求叠加的结果，已确认保持现状；定位与取舍见 `goals/20260920-2210-wifi-service.md` 第 17 条。
-- **MicroSD／GPIO22 修复的冲突部分已验证通过（2026-09-21）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；最新实机日志连续 9 次 `sdmmc_card_init failed (0x107)` 均无 GPIO22 冲突警告。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载尚未验证，`0x107`（`ESP_ERR_TIMEOUT`）的卡不响应问题仍待已知良好卡区分，节点 14 不能因此标记完成。
+- **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用，但 GD32 工程缺少对应实现，双 MCU 联调结果待确认。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
 - PC Monitor 的指标已接入节点 11 的 Agent Service 快照：真实数据需在被忽略的本地 `sdkconfig` 配置 Agent IPv4、PC 端启动 `pc-agent/` 并与设备同处一个局域网；可提交配置地址为空，固件在该状态显示 `--` 且不受影响。节点 11 的 CP5 已由项目负责人确认通过；该确认未附新增串口日志、截图或资源数值。首版固定 Agent IPv4，不支持服务发现；后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。

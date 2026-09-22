@@ -6,6 +6,10 @@
 
 ## 施工记录
 
+- 2026-09-22 15:38 -- 节点 14“Storage Service”完成 CP5 人工实机验收：项目负责人确认 ESP-IDF 构建、烧录与九个场景全部通过（无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功 SD 29818MB、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归）。`cmd=5 R1 illegal command` 确认为 IDF v6.1 标准 SDIO 探测步骤、microSD 拒绝 CMD5 属预期正常；无卡时的 `0x107` 确认为卡不响应的预期行为。Agent 未重复执行构建、烧录或串口监视。状态：已完成。→ `goals/20260922-0938-storage-service.md`
+- 2026-09-22 10:04 -- 节点 14“Storage Service”完成 CP1～CP3 编码与 CP4 静态复核：新增 `main/services/xiaomiao_storage_service.{h,c}`（固定 `/sdcard`、同步串行、幂等、快照输出、保留 GPIO22 修复时序、禁止自动格式化），`main/main.c` 迁出全部 SD 生命周期并接入启动链与 MicroSD 页 A／B 动作，`SERVICE_SRCS` 加入新源文件；静态检查（调用边界、括号配平、行尾空白、diff 范围）通过。未运行 ESP-IDF 构建、烧录或串口监视，CP5 实机验收待人工执行。状态：已实施，待人工验收。→ `goals/20260922-0938-storage-service.md`
+- 2026-09-22 09:38 -- 创建节点 14“Storage Service 与 MicroSD 完整验证”施工文档并立项：迁移 SD 生命周期到独立 Service，保留 GPIO22 修复，Hardware Test 改用公开快照与挂载／卸载接口；SD 卡已到货，计划覆盖无卡启动、正常挂载、安全卸载、重新挂载、带卡冷启动和共享 SPI 回归。状态：已立项，尚未实施。→ `goals/20260922-0938-storage-service.md`
+- 2026-09-21 21:58 -- 项目负责人确认已知良好 SD 卡尚未到货，`0x107` 根因区分与正常卡挂载验证挂起，待到货后复测；GPIO22 冲突修复其余部分保持已验证通过状态。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 21:48 -- 完成新版 MicroSD GPIO22 修复的静态复核：确认不再调用 `esp_vfs_fat_sdspi_mount()`，手动流程覆盖 SDSPI 初始化、卡初始化、FATFS 挂载、失败清理和成功卸载；未运行项目禁止的 ESP-IDF 构建、烧录或串口监视，实机结果待补。状态：已实施，待验证。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 21:43 -- 根据人工日志重新核对 IDF 6.1 失败清理时序：挂载前复位无法阻止 `esp_vfs_fat_sdspi_mount()` 内部在 `sdmmc_card_init()` 失败后立即执行的 GPIO 配置；`main/main.c` 改为手动 SDSPI 初始化与 FATFS 挂载，失败清理和成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22。状态：已实施，待静态复核和人工验证。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 21:29 -- 人工验证 MicroSD GPIO22 修复未通过：用户提供的烧录后日志中至少 6 次出现 `sdmmc_card_init failed (0x107)`，且每次约 1 ms 后仍出现 `gpio: conflict found for GPIO[22]`；`gpio_reset_pin()` 挂载前调用未达到“不再出现冲突警告”的验收预期。`0x107` 尚未通过已知良好 SD 卡区分具体根因，需重新核对失败清理路径。状态：验证失败，未收口。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
@@ -62,6 +66,9 @@
 - 2026-09-20 11:02 — 补齐节点 4 的 B 键判定通道决策：经核对 LVGL 9.5 `indev_keypad_proc()`，对象级事件回调通道不可行，改为强制使用按下／释放边沿加独立状态机。→ 同上
 
 ## 验证记录
+
+- 2026-09-22 15:38 -- 节点 14 CP5 人工验收通过：ESP-IDF v6.1 构建与烧录成功；九个场景覆盖无卡启动、10 次失败重试、正常挂载、安全卸载、重新挂载、带卡冷启动、共享 SPI 与五 App 回归，结果全部通过。Agent 未重复运行固件构建、烧录或串口监视。→ `goals/20260922-0938-storage-service.md`
+- 2026-09-22 09:32 -- 同步 MicroSD 当前状态文档：`README.md`、项目概览和 v0.1 设计文档均明确 GPIO22 冲突已修复并通过连续 9 次失败重试实机验证；正常 SD 卡挂载与 `0x107` 根因区分仍待已知良好卡，不改变节点 14 未完成状态。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 
 - 2026-09-21 21:56 -- 新版 MicroSD GPIO22 修复人工验证通过：烧录后连续 9 次触发 `sdmmc_card_init failed (0x107)`，没有再出现 `gpio: conflict found for GPIO[22]`；Hardware Test 关闭、重开和返回 Launcher 正常。已知良好 SD 卡挂载尚未验证，`0x107` 根因仍待区分。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 - 2026-09-21 21:48 -- 新版 MicroSD GPIO22 修复完成静态复核：确认不再调用 `esp_vfs_fat_sdspi_mount()`，手动流程覆盖 SDSPI 初始化、卡初始化、FATFS 挂载、失败清理和成功卸载；未运行项目禁止的 ESP-IDF 构建、烧录或串口监视，实机结果待补。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`

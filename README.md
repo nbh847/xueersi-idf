@@ -20,6 +20,8 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 - 最佳的性能优化，240mhz频率，高速SPI，PSRAM，FLASH频率，双全屏 DMA 缓冲（原设计为三重；加入 Wi-Fi 后内部 DMA 内存不足，2026-09-21 确认改为双缓冲，60 MHz SPI 下仍满足 60fps），稳定60fps UI
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。
+- MicroSD 重复挂载失败时出现的 GPIO22 冲突警告已修复，并于 2026-09-21 通过连续 9 次失败重试实机验证；Hardware Test 关闭、重开和返回 Launcher 均正常。SD 卡已于 2026-09-22 到货，节点 14 已完成完整实机验收（2026-09-22 15:38）：无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功（SD 29818MB）、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归。
+- MicroSD 生命周期已迁移到独立 Storage Service（`main/services/xiaomiao_storage_service.{h,c}`，节点 14，已完成实机验收）：普通启动在共享 SPI2 建立后自动尝试挂载一次，失败不阻塞进入 Launcher；`Hardware Test` 的 MicroSD 页读取 Service 快照显示状态，A 重试挂载、B 安全卸载；挂载点固定 `/sdcard`，禁止自动格式化，GPIO22 修复时序保留在 Service 内部。
 - ESP32 侧固件已包含并完成实机验证的 Wi-Fi Service：进入 `Settings → Wi-Fi` 可启动配网，设备会开启受密码保护的临时热点 `Xiaomiao-XXXX`（密码每次会话随机生成），手机连接后在浏览器打开 `http://192.168.4.1` 选网并输入密码；凭据只在试连成功取得 IPv4 后才会保存，密码错误或超时不会覆盖原有网络。保存后支持开机自动连接与断线退避重连，`Configure` 可更换网络，`Forget network` 只删除 Wi-Fi 凭据。`Tools → Wi-Fi` 显示真实的连接状态、SSID、信号档位与 IPv4 地址，屏幕右上角在所有页面显示四档 Wi-Fi 状态图标。详细验证记录见 `goals/20260920-2210-wifi-service.md`。
 - GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现下文所述的 I2C `0x40` LED、电机从机协议。
 - ESP32 侧已经按原有 `0x40` 协议实现 LED、电机命令；该协议与 GD32 实机固件的联调状态仍待确认。欢迎大家测试或在 Issues 里提出建议。
