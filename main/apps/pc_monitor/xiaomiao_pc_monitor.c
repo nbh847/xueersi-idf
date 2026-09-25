@@ -30,13 +30,14 @@
 #include "lvgl.h"
 
 #include "framework/xiaomiao_app.h"
+#include "framework/xiaomiao_fonts.h"
+#include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
 #include "services/xiaomiao_agent_service.h"
 
 static const char TAG[] = "pc_monitor";
 
 #define PC_MONITOR_APP_ID    "pc_monitor"
-#define PC_MONITOR_APP_NAME  "PC Monitor"
 #define PC_MONITOR_APP_ICON  LV_SYMBOL_EYE_OPEN
 
 #define PC_MONITOR_COLOR_SCREEN_BG 0x0E1016
@@ -81,10 +82,19 @@ static bool s_back_pending;
 static bool s_b_latched;
 static size_t s_refresh_ticks;
 
-static const char *s_page_titles[PC_MONITOR_PAGE_COUNT] = {
-    "CPU / RAM",
-    "GPU / Temp",
-};
+static const char *pc_monitor_page_title(pc_monitor_page_t page)
+{
+    /*
+     * One ID per page title. "CPU / RAM" is all technical abbreviation
+     * and stays identical in both languages; only "Temp" is localized.
+     */
+    static const xiaomiao_text_id_t titles[PC_MONITOR_PAGE_COUNT] = {
+        [PC_MONITOR_PAGE_CPU_RAM] = XM_TEXT_PM_TITLE_CPU_RAM,
+        [PC_MONITOR_PAGE_GPU_TEMP] = XM_TEXT_PM_TITLE_GPU_TEMP,
+    };
+
+    return xiaomiao_text(titles[page]);
+}
 
 static lv_indev_t *pc_monitor_find_keypad(void)
 {
@@ -157,14 +167,21 @@ static void pc_monitor_create_chart_page(lv_obj_t *parent, pc_monitor_page_t pag
     lv_obj_clear_flag(page_obj, LV_OBJ_FLAG_SCROLLABLE);
     s_pages[page] = page_obj;
 
-    const int32_t row_y = 15;
+    /*
+     * 160 x 128 rows below the 18 px title line: the name/value pairs
+     * own y=22..38, the chart starts under them. The pair labels are
+     * compact status text, so they use the small token (12 px Chinese,
+     * 12 px Montserrat fallback for the digits).
+     */
+    const int32_t row_y = 22;
+    const int32_t row_h = 16;
     const int32_t name_x[2] = { 4, 82 };
     const int32_t value_x[2] = { 32, 110 };
 
     for (size_t i = 0; i < 2; ++i) {
         const char *name = (page == PC_MONITOR_PAGE_CPU_RAM)
                            ? (i == 0 ? "CPU" : "RAM")
-                           : (i == 0 ? "GPU" : "GPU T");
+                           : (i == 0 ? "GPU" : xiaomiao_text(XM_TEXT_PM_LABEL_TEMP));
         const char *init_val = (page == PC_MONITOR_PAGE_GPU_TEMP && i == 1)
                                ? PC_MONITOR_DEGREE_C : "-- %";
         const uint32_t line_color = (page == PC_MONITOR_PAGE_CPU_RAM)
@@ -172,33 +189,33 @@ static void pc_monitor_create_chart_page(lv_obj_t *parent, pc_monitor_page_t pag
             : (i == 0 ? PC_MONITOR_COLOR_GPU : PC_MONITOR_COLOR_TEMP);
 
         s_name_labels[page][i] = pc_monitor_create_label(page_obj, name,
-                                                         &lv_font_montserrat_12,
+                                                         xiaomiao_font_small(),
                                                          line_color);
-        pc_monitor_place(s_name_labels[page][i], name_x[i], row_y, 28, 13, LV_TEXT_ALIGN_LEFT);
+        pc_monitor_place(s_name_labels[page][i], name_x[i], row_y, 28, row_h, LV_TEXT_ALIGN_LEFT);
 
         s_value_labels[page][i] = pc_monitor_create_label(page_obj, init_val,
-                                                          &lv_font_montserrat_12,
+                                                          xiaomiao_font_small(),
                                                           line_color);
-        pc_monitor_place(s_value_labels[page][i], value_x[i], row_y, 48, 13, LV_TEXT_ALIGN_LEFT);
+        pc_monitor_place(s_value_labels[page][i], value_x[i], row_y, 48, row_h, LV_TEXT_ALIGN_LEFT);
     }
 
     const char *y_top = "100";
     lv_obj_t *y_top_label = pc_monitor_create_label(page_obj, y_top,
-                                                    &lv_font_montserrat_10,
+                                                    xiaomiao_font_small(),
                                                     PC_MONITOR_COLOR_MUTED);
-    pc_monitor_place(y_top_label, 0, 30, 18, 10, LV_TEXT_ALIGN_LEFT);
+    pc_monitor_place(y_top_label, 0, 42, 18, 12, LV_TEXT_ALIGN_LEFT);
     lv_obj_t *y_bot_label = pc_monitor_create_label(page_obj, "0",
-                                                    &lv_font_montserrat_10,
+                                                    xiaomiao_font_small(),
                                                     PC_MONITOR_COLOR_MUTED);
-    pc_monitor_place(y_bot_label, 0, 94, 18, 10, LV_TEXT_ALIGN_LEFT);
+    pc_monitor_place(y_bot_label, 0, 88, 18, 12, LV_TEXT_ALIGN_LEFT);
 
     lv_obj_t *chart = lv_chart_create(page_obj);
     if (chart == NULL) {
         ESP_LOGE(TAG, "chart %u allocation failed", (unsigned)page);
         return;
     }
-    lv_obj_set_pos(chart, 20, 30);
-    lv_obj_set_size(chart, PC_MONITOR_SCREEN_W - 22, 72);
+    lv_obj_set_pos(chart, 20, 42);
+    lv_obj_set_size(chart, PC_MONITOR_SCREEN_W - 22, 60);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, PC_MONITOR_HISTORY);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -248,7 +265,7 @@ static void pc_monitor_show_page(pc_monitor_page_t page)
     }
     s_current_page = page;
     if (s_title_label != NULL) {
-        lv_label_set_text(s_title_label, s_page_titles[page]);
+        lv_label_set_text(s_title_label, pc_monitor_page_title(page));
     }
 }
 
@@ -283,15 +300,20 @@ static void pc_monitor_update_values(const xiaomiao_agent_snapshot_t *snap)
         lv_label_set_text(s_value_labels[PC_MONITOR_PAGE_GPU_TEMP][0], buf);
     }
 
-    const char *temp_name = "TEMP";
+    /*
+     * The temperature row names its source in English ("GPU T"/"CPU T");
+     * the Chinese table collapses both to one 24 px CJK word so the row
+     * still fits its 28 px label box.
+     */
+    const char *temp_name = xiaomiao_text(XM_TEXT_PM_LABEL_TEMP);
     const char *temp_val = PC_MONITOR_DEGREE_C;
     if (snap->gpu_temperature_valid) {
-        temp_name = "GPU T";
+        temp_name = xiaomiao_text(XM_TEXT_PM_LABEL_GPU_TEMP);
         pc_monitor_format_value(snap->gpu_temperature_c,
                                 " " PC_MONITOR_DEGREE_UTF8 "C", buf, sizeof(buf));
         temp_val = buf;
     } else if (snap->cpu_temperature_valid) {
-        temp_name = "CPU T";
+        temp_name = xiaomiao_text(XM_TEXT_PM_LABEL_CPU_TEMP);
         pc_monitor_format_value(snap->cpu_temperature_c,
                                 " " PC_MONITOR_DEGREE_UTF8 "C", buf, sizeof(buf));
         temp_val = buf;
@@ -438,8 +460,9 @@ static void pc_monitor_open(void)
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
     s_container = container;
 
-    s_title_label = pc_monitor_create_label(container, s_page_titles[0],
-                                            &lv_font_montserrat_14,
+    s_title_label = pc_monitor_create_label(container,
+                                            pc_monitor_page_title(PC_MONITOR_PAGE_CPU_RAM),
+                                            xiaomiao_font_title(),
                                             PC_MONITOR_COLOR_TITLE);
     pc_monitor_place(s_title_label, 0, 2, PC_MONITOR_SCREEN_W, 14,
                      LV_TEXT_ALIGN_CENTER);
@@ -449,10 +472,12 @@ static void pc_monitor_open(void)
     }
     pc_monitor_show_page(PC_MONITOR_PAGE_CPU_RAM);
 
-    s_hint_label = pc_monitor_create_label(container, "B Back   < > Switch",
-                                           &lv_font_montserrat_10,
+    /* Footer sits under the 42..102 chart band and stays one line. */
+    s_hint_label = pc_monitor_create_label(container,
+                                           xiaomiao_text(XM_TEXT_PM_HINT),
+                                           xiaomiao_font_small(),
                                            PC_MONITOR_COLOR_MUTED);
-    pc_monitor_place(s_hint_label, 0, 117, PC_MONITOR_SCREEN_W, 10,
+    pc_monitor_place(s_hint_label, 0, 113, PC_MONITOR_SCREEN_W, 14,
                      LV_TEXT_ALIGN_CENTER);
 
     lv_group_add_obj(s_group, container);
@@ -509,9 +534,15 @@ static void pc_monitor_close(void)
              (unsigned)lv_obj_get_child_count(lv_screen_active()));
 }
 
-static const xiaomiao_app_t s_pc_monitor_app = {
+/*
+ * Not const: `name` is the localized text resolved when the Launcher
+ * asks for the App, i.e. after the Font Service has latched the
+ * language. Registry and Navigation only ever see the pointer returned
+ * by the accessor below.
+ */
+static xiaomiao_app_t s_pc_monitor_app = {
     .id = PC_MONITOR_APP_ID,
-    .name = PC_MONITOR_APP_NAME,
+    .name = NULL,
     .icon = PC_MONITOR_APP_ICON,
     .init = NULL,
     .open = pc_monitor_open,
@@ -520,5 +551,6 @@ static const xiaomiao_app_t s_pc_monitor_app = {
 
 const xiaomiao_app_t *xiaomiao_pc_monitor_app(void)
 {
+    s_pc_monitor_app.name = xiaomiao_text(XM_TEXT_APP_PC_MONITOR);
     return &s_pc_monitor_app;
 }

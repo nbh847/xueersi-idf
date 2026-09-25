@@ -1,0 +1,6 @@
+# Pillow is pinned to the exact version used to produce the committed
+# assets/fonts/xiaomiao-zh-cn.xmf. Reproducibility of the font pack depends on
+# rendering with this precise Pillow version (FreeType hinting/greyscale output
+# is version-sensitive). Do NOT bump without regenerating and re-verifying the
+# SHA-256 of the pack and updating assets/LICENSES/font-source.txt.
+pillow==11.3.0

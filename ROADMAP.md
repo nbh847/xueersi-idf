@@ -14,7 +14,7 @@
 
 ## 当前开发节点
 
-- **节点 0～11 与节点 14 均已完成并取得人工验收确认。** 节点 14 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 九个实机场景全部通过（2026-09-22 15:38）；Agent 未重复执行固件构建、烧录或串口监视。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
+- **节点 0～11 与节点 14～15 均已完成并取得人工验收确认。** 节点 14 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 九个实机场景全部通过（2026-09-22 15:38）；节点 15 的 CP1～CP7 于 2026-09-25 闭环（豁免项见其 Goal 文档）。Agent 未重复执行固件构建、烧录或串口监视。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：
 
   | 节点 | 施工文档 |
   | --- | --- |
@@ -31,6 +31,7 @@
   | 10 Wi-Fi Service | `goals/20260920-2210-wifi-service.md` |
   | 11 PC Monitor 通信 | `goals/20260921-1238-pc-monitor-communication.md` |
   | 14 Storage Service | `goals/20260922-0938-storage-service.md` |
+  | 15 Assets、文件系统与 Flash 完整中文字库（15A～15D） | 总纲 `goals/20260922-1701-assets-filesystem-chinese-font.md`；`goals/20260922-1711-assets-filesystem-foundation.md`、`goals/20260922-1711-flash-chinese-font-runtime.md`、`goals/20260922-1711-ui-chinese-localization.md`、`goals/20260922-1711-node15-integration-validation.md` |
 
 - 节点 11“PC Monitor 通信”已于 2026-09-21 完成（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：一个统一 Python HTTP Agent（`pc-agent/`，固定 IPv4、端口 `8766`，仅 `/api/v1/health` 与 `/api/v1/pc/metrics`）+ 固件通用 Agent Service（`main/services/xiaomiao_agent_service.{h,c}`，Kconfig 固定地址、Worker、响应上限、JSON 校验、3 秒失效）+ PC Monitor 接入（两页指标与滚动图、LVGL timer 每秒读快照刷新 CPU／RAM／GPU／温度，温度行按 GPU T／CPU T／TEMP 切换）。PC Agent 的 Python 单测 18/18 通过，固件静态复核通过；项目负责人确认固件构建、烧录与 CP5 手动场景全部通过，未提供新增日志。服务发现、AI 额度路由和其他 PC 数据端点不在本节点实现。
 
@@ -61,23 +62,28 @@
 - [ ] 节点 12：Audio Service。（已推迟，2026-09-21 确认后面再做，等有真实消费者再启动）
 - [ ] 节点 13：首个正式游戏。（已推迟，2026-09-21 确认不在本设备做游戏）
 - [x] 节点 14：Storage Service。
-- [ ] 节点 15：Assets 与文件系统。
+- [x] 节点 15：Assets、文件系统与 Flash 完整中文字库。（总纲 `goals/20260922-1701-assets-filesystem-chinese-font.md`；15A～15D 的 CP1～CP7 于 2026-09-25 全部闭环：两套自测实机 `PASS`、无 SD 中文目视通过、26 组开合无泄漏、有 SD 对照、全 UI 回归和 merged bin 从 `0x0` 烧录后中文正常；字体损坏英文回退注入经负责人决定跳过，不作通过项。烧录轮次发现的配网回归已在独立 Goal 修复并完成连续两次换网验证。）
 - [ ] 节点 16：GD32 `0x40` 协议补全。
 
 ## 下一步
 
 1. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
-2. 下一个有序节点是节点 15「Assets 与文件系统」，可复用节点 14 的 Storage Service 挂载点 `/sdcard` 与已预留的 1.5 MB `assets` 分区；节点 12（Audio Service）与节点 13（首个正式游戏）已推迟。
+2. 节点 16（GD32 `0x40` 协议补全）可按计划继续；节点 12（Audio Service）与节点 13（首个正式游戏）继续推迟。节点 15 与配网回归均已收口，证据分别见节点 15 总纲和 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。
+   后续固件人工复验可直接执行 `idf.py -p COM5 flash monitor`：`flash` 会先按需构建，构建成功后烧录并进入串口监视，无需单独预先运行 `idf.py build`。
 3. 可选补录（均不影响已完成节点的结论，固件已在板上，重新 `idf.py -p COM5 monitor` 即可，无需重新编译或烧录）：节点 4 缺失设备页的实际显示文本与挂载失败后重新进入 App 的行为；节点 5 的“连续 10 轮”与“5 轮双 App 交替”样本；节点 8 与节点 9 末轮回归的补充串口日志。
 4. 已实现的设计约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行，`lv_indev_set_long_press_time()` 全局设置未改；Launcher 的“App 打开态转发 B”分支对已取得输入焦点的 App 不可达。细节见 `goals/20260920-1053-hardware-test-app.md` 与 `goals/20260920-1159-games-placeholder.md`。
-5. **UI 中文本地化尚未立项**，建议排在节点 15「Assets 与文件系统」之后（或作为其第二阶段）；字库体积、字号与两条加载路径见下节「待确认与已知风险」。
 
 ## 待确认与已知风险
 
-- **分区表已重划：app 2 MB + assets 1.5 MB（2026-09-21 确认）**：加 Wi-Fi 后 `build/xiaomiao.bin` 达 1,391,264 字节（1359 KB），上一版 1500 KB 的 app 槽只剩 141 KB，而 Flash 另有 2.41 MB 未进分区表。现改为项目自有 `partitions.csv`（经 IDF `gen_esp32part.py` 校验）：`nvs` 24 KB @ 0xA000 与 `phy_init` 4 KB 完全不变（已存 Settings 与 Wi-Fi 凭据不受影响），`factory` 由 1500 KB 扩到 **2 MB**，新增 **1.5 MB `assets`（data/spiffs）** 分区预留给节点 15 的字体/图标/音效资源，末尾留约 384 KB 未分配。这是节点 10「不修改分区表」边界的唯一例外，已获确认。因分区表文件变化，构建前必须重新生成被忽略的本地 `sdkconfig`。`assets` 分区在节点 15 落地前不挂载、不写入，因此对当前固件完全无害。
-- **UI 中文本地化尚未立项**：建议排在节点 15「Assets 与文件系统」之后（或作为其第二阶段）。理由：① 全量中文字库不能进 app（app 内静态资源同样受 app 分区限制，现余量约 690 KB），应放进已预留的 1.5 MB `assets` 分区或 SD；② 节点 11～14 还会新增或改写界面文案，现在翻译会重复劳动；③ 中文需要 14/16 px 字号并逐页重排版。字库有两条路径：`assets` 分区 + `esp_partition_mmap`（零 RAM、不怕拔卡），或走节点 15 的 Assets／SD 机制。若只想先看效果，可只把现有文案做成子集字库（约 10～20 KB）静态编入 app。
+- **SoftAP 配网回归已收口（2026-09-25，两次连续换网已通过）**：
+  - **HTTPD 与内存**：旧双缓冲固件曾在第二会话出现 `ESP_ERR_HTTPD_TASK (0xb008)`。当前单缓冲固件连续两次启动 HTTPD 成功，第二次 `largest8bit=36864`；两次停止后的内部 free 分别为 70619 和 73535 字节，未见单调下降。同条件长期内存回归及显示刷新表现仍待验证。
+  - **第二会话 DHCP 与换网**：此前手机停在“寻找 IP”。在 AP netif 销毁前显式停止 DHCP 的新固件上，两次会话均向手机分配 `192.168.4.2`，完成网页扫描、目标网络 `CMCC-5pu4`／`CMCC-U2Tx` 连接、STA IPv4 获取和凭据保存，会话均正常关闭。两次换网流程已由人工日志验证；旧 UDP/67 遗留机制与修复效果吻合，但没有抓包或底层对象证据证明旧 PCB 确实遗留。详情见 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。
+  - 另注：merged bin 从 `0x0` 整段擦写会清掉 NVS（Wi-Fi 凭据与 Settings，已由 `has_credentials=0` 证实），属单文件重装的预期代价。因此诊断期间使用不会写 NVS 的普通 `idf.py -p COM5 flash`，不要再从 `0x0` 烧录 merged bin。细则见 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。
+
+- **分区表：app 2 MB + assets 1.5 MB**：项目自有 `partitions.csv` 保留 `nvs` 24 KB @ `0xA000` 与 `phy_init` 4 KB，`factory` 为 2 MB，`assets` 为 1.5 MB `data/spiffs`。节点 15 已将完整 GB2312 字库及 manifest 写入资源镜像，并验证普通 flash 与 merged bin 烧录；从 `0x0` 写 merged bin 会覆盖 NVS，需重新配网。分区和镜像验收细节见节点 15 总纲与 15D Goal。
+- **UI 中文本地化（15C）已实施，核心显示已实机确认（2026-09-24/25）**：生产中文字库位于本机 1.5 MB `assets` SPIFFS 分区，不依赖 SD。范围固定为完整 GB2312（6,763 汉字 + 682 符号），12／16 px A2 两档，XMF1 整包 PSRAM 驻留读取，字形落位缺陷已修复并复验；默认中文，字体挂载、校验或读取失败时切回英文文案和 Montserrat（损坏注入回退观察经负责人决定跳过，未实机演示）。五 App 中文与 26 组开合已目视通过；160 × 128 逐页布局的 Hardware Test 15 页等剩余页面归入 CP6 全 UI 逐项回归。完整方案与验收标准见 `goals/20260922-1701-assets-filesystem-chinese-font.md`。
 - **Flash 与 PSRAM 容量已核对（2026-09-21）**：`esptool flash-id` 读出 `Manufacturer 20 / Device 4016 / 4MB`，芯片为 ESP32-D0WD rev v1.0；`Tools → System Info` 同时给出运行时读数 `Flash 4 MiB`，两条独立路径一致。**PSRAM 运行时可用量为 4 MiB**，而设计文档写的是 8 MB——这不是模块缺容量，而是 ESP32 的 PSRAM 映射窗口上限即 4 MB（8 MB 颗粒也只能用到 4 MB，除非做 bank 切换，IDF 默认不做）；后续规划大体积资源（字库、音频、Assets）时按 4 MiB 计算。4 MB Flash 中约 2.41 MB 未进分区表，可用于扩分区或新建 data 分区。另注：`Tools → System Info` 的 `CPU` 行打印的是 `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ` 配置值而非运行时测量值。
-- **节点 10 内部 RAM 预算偏紧（已确认取舍）**：Wi-Fi 驱动与 LCD 的全屏 DMA 缓冲共用内部 RAM（ESP32 的 SPI DMA 不能寻址 PSRAM），三块 40 KB 缓冲与 Wi-Fi 相加放不下，2026-09-21 实测第三块分配失败。已采取两项措施（Wi-Fi／LWIP 缓冲优先进 PSRAM、第三块失败时降级为双缓冲），并确认接受双缓冲。当前显示为 2 块全屏缓冲，代码仍保留“尝试第三块、失败降级”的自适应写法。内部内存余量仍然不大：后续若要恢复三缓冲、或再叠加 Service 与大缓冲，需先核算内部 RAM 并重新评估。
+- **内部 RAM 预算偏紧（两次配网已实机验证）**：节点 10 时三块 40 KB 显示 DMA 缓冲与 Wi-Fi 共存失败，曾接受两块；本次 HTTPD 运行期间出现 AP 关联响应发送失败。当前单块 40,960 字节全屏 DMA 缓冲释放内部 RAM，人工日志确认连续两次配网成功；第二次 HTTPD 启动后 `largest8bit=36864`，两次停止后 free 未单调下降。显示刷新性能、更多轮同条件内存回归和重启持久化待验证；历史双缓冲验收仍保留在节点 10 Goal。
 - **配网热点的已接受行为**：热点 SSID 固定为 `Xiaomiao-XXXX`，密码每次会话随机生成。手机若缓存过同名热点的旧密码，首次关联会使用旧密码并失败，需要重新输入设备屏幕上的本次密码。该行为是固定 SSID 与随机密码安全要求叠加的结果，已确认保持现状；定位与取舍见 `goals/20260920-2210-wifi-service.md` 第 17 条。
 - **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用，但 GD32 工程缺少对应实现，双 MCU 联调结果待确认。

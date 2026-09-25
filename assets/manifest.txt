@@ -1,0 +1,7 @@
+schema 1
+assets-image v1 (goal node 15A/15B)
+manifest.txt   this file; the Assets Service requires it to report READY
+fonts/         xiaomiao-zh-cn.xmf - full GB2312 XMF1 pack, 7445 glyphs, 12/16 px A2 (node 15B)
+icons/         reserved for future app icons; LVGL Symbol fallback is in use
+fixtures/      invalid-font.xmf - CRC-corrupted copy used by the font service self test (node 15B)
+LICENSES/      noto-sans-cjk-ofl.txt + font-source.txt record the font licence and source fingerprint

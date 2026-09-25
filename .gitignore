@@ -28,6 +28,9 @@ build/
 
 # ESP-IDF specific build outputs
 *.bin
+# Node 15: committed Assets source resources live under assets/ only.
+# Build outputs stay ignored everywhere else.
+!assets/**/*.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory

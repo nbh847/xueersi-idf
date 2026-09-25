@@ -1,5 +1,5 @@
 /*
- * Settings App (goal nodes 8, 9 and 10).
+ * Settings App (goal nodes 8, 9, 10 and 15C).
  *
  * UI skeleton plus the real Service reads: an in-App menu (Wi-Fi /
  * Display / Sound / System) with four detail pages. Everything is built
@@ -21,6 +21,10 @@
  * - System reports the real persistence state, so a degraded boot can
  *   never be shown as "saved" (goal node 9, decisions 5 and 6).
  * - Nothing reads hardware to fabricate a state.
+ * - Every user-visible string goes through the i18n layer and every label
+ *   through a font token, so a Chinese UI is only a table switch. Dynamic
+ *   values stay single-line with the DOTS long mode, which keeps an over
+ *   long SSID or phrase inside its column (goal node 15C).
  *
  * Input: the App takes the focus on its own root inside the LVGL default
  * group, so LVGL sends it the key events and the Launcher's key handler
@@ -49,6 +53,8 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
+#include "framework/xiaomiao_fonts.h"
+#include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
 #include "services/xiaomiao_settings_service.h"
 #include "services/xiaomiao_wifi_service.h"
@@ -56,10 +62,9 @@
 static const char TAG[] = "settings";
 
 #define SETTINGS_APP_ID    "settings"
-#define SETTINGS_APP_NAME  "Settings"
 /* An edit/pencil glyph reads as "configuration" and does not clash with
  * the Hardware Test icon (LV_SYMBOL_SETTINGS); the Launcher renders
- * icons with montserrat_12, which carries LV_SYMBOL_EDIT (goal
+ * icons with the small font token, which carries LV_SYMBOL_EDIT (goal
  * decision 3). */
 #define SETTINGS_APP_ICON  LV_SYMBOL_EDIT
 
@@ -76,9 +81,10 @@ static const char TAG[] = "settings";
 
 /*
  * 160 x 128 layout. Title on top, footer hint at the bottom, four menu
- * rows in between. The montserrat_12 line height is 15 px, so 20 px rows
- * with a 22 px step hold the text without clipping; the last row ends at
- * y=106, leaving the footer at y=110 clear (goal decision 8).
+ * rows in between. The small font token is 15 px tall with Montserrat and
+ * 14 px with the Chinese font, so 20 px rows with a 22 px step hold the
+ * text without clipping; the last row ends at y=106, leaving the footer
+ * at y=110 clear (goal decisions 8 and 15C).
  */
 #define SETTINGS_SCREEN_W   160
 #define SETTINGS_TITLE_Y    2
@@ -100,15 +106,16 @@ static const char TAG[] = "settings";
 #define SETTINGS_STATUS_LINE_H    16
 #define SETTINGS_STATUS_DETAIL_H  14
 
-/* Longest System detail line, e.g. "NVS error 0x110C". */
-#define SETTINGS_SYSTEM_DETAIL_MAX 24
+/* Longest System detail line, e.g. "NVS error 0x110C"; UTF-8 Chinese is
+ * three bytes per glyph, so the budget is wider than the pixel one. */
+#define SETTINGS_SYSTEM_DETAIL_MAX 40
 
 /*
  * Wi-Fi page: one read-only status line plus three actionable rows, a
- * message line and the footer. Both columns use montserrat_10, which is
- * the widest font that still fits the longest pair of strings on a
- * 160 px line ("Forget network" 74 px + "Auth failed" 58 px). Rows are
- * 18 px high on a 20 px step, which keeps the last row clear of the
+ * message line and the footer. Both columns use the small font token, the
+ * largest one whose localized pairs still fit a 160 px line
+ * ("Forget network" / "Auth failed" and their Chinese equivalents). Rows
+ * are 18 px high on a 20 px step, which keeps the last row clear of the
  * message line (goal node 10, checkpoint 4).
  */
 #define SETTINGS_WIFI_ROW_X      4
@@ -155,14 +162,16 @@ typedef enum {
     SETTINGS_WIFI_CONFIRM_FORGET,
 } settings_wifi_mode_t;
 
-/* Menu order is the focus order: up/down move the index, A opens it. */
-static const char *const s_menu_labels[] = {
-    "Wi-Fi",
-    "Display",
-    "Sound",
-    "System",
+/* Menu order is the focus order: up/down move the index, A opens it.
+ * The labels are resolved through the i18n layer at build time. */
+static const xiaomiao_text_id_t s_menu_label_ids[] = {
+    XM_TEXT_MENU_WIFI,
+    XM_TEXT_SETTINGS_DISPLAY,
+    XM_TEXT_SETTINGS_SOUND,
+    XM_TEXT_SETTINGS_SYSTEM,
 };
-#define SETTINGS_MENU_ITEM_COUNT (sizeof(s_menu_labels) / sizeof(s_menu_labels[0]))
+#define SETTINGS_MENU_ITEM_COUNT \
+    (sizeof(s_menu_label_ids) / sizeof(s_menu_label_ids[0]))
 
 #define SETTINGS_MENU_ITEM_WIFI    0
 #define SETTINGS_MENU_ITEM_DISPLAY 1
@@ -231,7 +240,7 @@ static lv_obj_t *settings_place_label(lv_obj_t *parent, const char *text,
 
 static lv_obj_t *settings_create_page_title(lv_obj_t *parent, const char *text)
 {
-    return settings_place_label(parent, text, &lv_font_montserrat_12,
+    return settings_place_label(parent, text, xiaomiao_font_small(),
                                 SETTINGS_COLOR_TITLE, 0, SETTINGS_TITLE_Y,
                                 SETTINGS_SCREEN_W, SETTINGS_TITLE_H,
                                 LV_TEXT_ALIGN_CENTER);
@@ -239,7 +248,7 @@ static lv_obj_t *settings_create_page_title(lv_obj_t *parent, const char *text)
 
 static void settings_create_footer(lv_obj_t *parent, const char *text)
 {
-    settings_place_label(parent, text, &lv_font_montserrat_10,
+    settings_place_label(parent, text, xiaomiao_font_small(),
                          SETTINGS_COLOR_MUTED, 0, SETTINGS_FOOTER_Y,
                          SETTINGS_SCREEN_W, SETTINGS_FOOTER_H,
                          LV_TEXT_ALIGN_CENTER);
@@ -272,7 +281,7 @@ static void settings_menu_highlight(void)
 
 static void settings_build_menu(lv_obj_t *content)
 {
-    settings_create_page_title(content, SETTINGS_APP_NAME);
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_APP_SETTINGS));
 
     for (size_t i = 0; i < SETTINGS_MENU_ITEM_COUNT; ++i) {
         const int32_t y = SETTINGS_MENU_Y0 + (int32_t)i * SETTINGS_MENU_STEP;
@@ -291,8 +300,8 @@ static void settings_build_menu(lv_obj_t *content)
         /* Decoration only: the root below stays the single focus object. */
         lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
-        lv_obj_t *label = settings_create_label(row, s_menu_labels[i],
-                                                &lv_font_montserrat_12,
+        lv_obj_t *label = settings_create_label(row, xiaomiao_text(s_menu_label_ids[i]),
+                                                xiaomiao_font_small(),
                                                 SETTINGS_COLOR_TITLE,
                                                 LV_LABEL_LONG_MODE_DOTS);
         if (label != NULL) {
@@ -304,7 +313,7 @@ static void settings_build_menu(lv_obj_t *content)
     }
 
     settings_menu_highlight();
-    settings_create_footer(content, "A Open  B Back");
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_A_OPEN_B_BACK));
 }
 
 /*
@@ -319,19 +328,19 @@ static void settings_build_detail(lv_obj_t *content, const char *title,
 {
     settings_create_page_title(content, title);
 
-    settings_place_label(content, headline, &lv_font_montserrat_12,
+    settings_place_label(content, headline, xiaomiao_font_small(),
                          SETTINGS_COLOR_TEXT, 0, SETTINGS_STATUS_HEAD_Y,
                          SETTINGS_SCREEN_W, SETTINGS_STATUS_LINE_H,
                          LV_TEXT_ALIGN_CENTER);
-    settings_place_label(content, state, &lv_font_montserrat_12, state_color,
+    settings_place_label(content, state, xiaomiao_font_small(), state_color,
                          0, SETTINGS_STATUS_STATE_Y, SETTINGS_SCREEN_W,
                          SETTINGS_STATUS_LINE_H, LV_TEXT_ALIGN_CENTER);
-    settings_place_label(content, detail, &lv_font_montserrat_10,
+    settings_place_label(content, detail, xiaomiao_font_small(),
                          SETTINGS_COLOR_MUTED, 0, SETTINGS_STATUS_DETAIL_Y,
                          SETTINGS_SCREEN_W, SETTINGS_STATUS_DETAIL_H,
                          LV_TEXT_ALIGN_CENTER);
 
-    settings_create_footer(content, "B Back");
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
 }
 
 /*
@@ -356,41 +365,45 @@ static void settings_build_system(lv_obj_t *content)
     if (get_err != ESP_OK) {
         /* The states must stay distinguishable: a degraded boot is never
          * displayed as a successful save (goal node 9, decision 6). */
-        state = "Unavailable";
+        state = xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE);
         state_color = SETTINGS_COLOR_WARN;
-        snprintf(detail, sizeof(detail), "Settings unavailable");
+        snprintf(detail, sizeof(detail), "%s",
+                 xiaomiao_text(XM_TEXT_SETTINGS_SETTINGS_UNAVAILABLE));
     }
     else {
         switch (xiaomiao_settings_source()) {
         case XIAOMIAO_SETTINGS_SOURCE_NVS:
-            state = "Loaded from NVS";
+            state = xiaomiao_text(XM_TEXT_SETTINGS_FROM_NVS);
             state_color = SETTINGS_COLOR_TEXT;
             break;
         case XIAOMIAO_SETTINGS_SOURCE_RECOVERED:
-            state = "Defaults restored";
+            state = xiaomiao_text(XM_TEXT_SETTINGS_RECOVERED);
             state_color = SETTINGS_COLOR_WARN;
             break;
         case XIAOMIAO_SETTINGS_SOURCE_DEGRADED:
-            state = "Not persisted";
+            state = xiaomiao_text(XM_TEXT_SETTINGS_NOT_PERSISTED);
             state_color = SETTINGS_COLOR_WARN;
             break;
         case XIAOMIAO_SETTINGS_SOURCE_DEFAULTS:
         default:
-            state = "Defaults applied";
+            state = xiaomiao_text(XM_TEXT_SETTINGS_DEFAULTS);
             state_color = SETTINGS_COLOR_TEXT;
             break;
         }
 
         const esp_err_t last_err = xiaomiao_settings_last_error();
         if (last_err != ESP_OK) {
-            snprintf(detail, sizeof(detail), "NVS error 0x%X", (unsigned)last_err);
+            snprintf(detail, sizeof(detail), "%s 0x%X",
+                     xiaomiao_text(XM_TEXT_SETTINGS_NVS_ERROR), (unsigned)last_err);
         }
         else {
-            snprintf(detail, sizeof(detail), "2 stored fields");
+            snprintf(detail, sizeof(detail), "%s",
+                     xiaomiao_text(XM_TEXT_SETTINGS_STORED_FIELDS));
         }
     }
 
-    settings_build_detail(content, "System", "Settings Service", state,
+    settings_build_detail(content, xiaomiao_text(XM_TEXT_SETTINGS_SYSTEM),
+                          xiaomiao_text(XM_TEXT_SETTINGS_SERVICE), state,
                           state_color, detail);
 }
 
@@ -407,26 +420,26 @@ static const char *settings_wifi_state_text(const xiaomiao_wifi_snapshot_t *snap
 {
     switch (snapshot->state) {
     case XIAOMIAO_WIFI_CONNECTED:
-        return "Connected";
+        return xiaomiao_text(XM_TEXT_STATE_CONNECTED);
     case XIAOMIAO_WIFI_CONNECTING:
-        return "Connecting";
+        return xiaomiao_text(XM_TEXT_STATE_CONNECTING);
     case XIAOMIAO_WIFI_RETRY_WAIT:
-        return "Reconnecting";
+        return xiaomiao_text(XM_TEXT_STATE_RECONNECTING);
     case XIAOMIAO_WIFI_SCANNING:
-        return "Scanning";
+        return xiaomiao_text(XM_TEXT_STATE_SCANNING);
     case XIAOMIAO_WIFI_PROVISIONING:
-        return "Setup";
+        return xiaomiao_text(XM_TEXT_STATE_SETUP);
     case XIAOMIAO_WIFI_DISABLED:
-        return "Off";
+        return xiaomiao_text(XM_TEXT_STATE_OFF);
     case XIAOMIAO_WIFI_NO_CREDENTIALS:
-        return "Not configured";
+        return xiaomiao_text(XM_TEXT_STATE_NOT_CONFIGURED);
     case XIAOMIAO_WIFI_AUTH_FAILED:
-        return "Auth failed";
+        return xiaomiao_text(XM_TEXT_STATE_AUTH_FAILED);
     case XIAOMIAO_WIFI_ERROR:
-        return "Error";
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
     case XIAOMIAO_WIFI_DISCONNECTED:
     default:
-        return "Not connected";
+        return xiaomiao_text(XM_TEXT_STATE_NOT_CONNECTED);
     }
 }
 
@@ -470,7 +483,7 @@ static lv_obj_t *settings_wifi_row(lv_obj_t *content, const char *label, int32_t
     /* Decoration only: the root below stays the single focus object. */
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *name = settings_create_label(row, label, &lv_font_montserrat_10,
+    lv_obj_t *name = settings_create_label(row, label, xiaomiao_font_small(),
                                            SETTINGS_COLOR_TITLE, LV_LABEL_LONG_MODE_DOTS);
     if (name != NULL) {
         lv_obj_set_size(name, value_x - 12, 14);
@@ -478,7 +491,7 @@ static lv_obj_t *settings_wifi_row(lv_obj_t *content, const char *label, int32_t
     }
 
     if (out_value != NULL) {
-        lv_obj_t *value = settings_create_label(row, "", &lv_font_montserrat_10,
+        lv_obj_t *value = settings_create_label(row, "", xiaomiao_font_small(),
                                                 SETTINGS_COLOR_TEXT, LV_LABEL_LONG_MODE_DOTS);
         if (value != NULL) {
             lv_obj_set_size(value, SETTINGS_WIFI_ROW_RIGHT - value_x, 14);
@@ -527,13 +540,14 @@ static void settings_build_wifi(lv_obj_t *content)
     memset(&snapshot, 0, sizeof(snapshot));
     const esp_err_t snapshot_err = xiaomiao_wifi_get_snapshot(&snapshot);
 
-    settings_create_page_title(content, "Wi-Fi");
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_MENU_WIFI));
 
     lv_obj_t *status_value = NULL;
-    (void)settings_wifi_row(content, "Status", SETTINGS_WIFI_ROW_Y0,
-                            SETTINGS_WIFI_STATUS_VALUE_X, &status_value);
+    (void)settings_wifi_row(content, xiaomiao_text(XM_TEXT_LABEL_STATUS),
+                            SETTINGS_WIFI_ROW_Y0, SETTINGS_WIFI_STATUS_VALUE_X,
+                            &status_value);
     if (status_value != NULL) {
-        const char *text = "Unavailable";
+        const char *text = xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE);
         uint32_t color = SETTINGS_COLOR_WARN;
         if (snapshot_err == ESP_OK) {
             text = settings_wifi_state_text(&snapshot);
@@ -545,33 +559,39 @@ static void settings_build_wifi(lv_obj_t *content)
 
     lv_obj_t *auto_value = NULL;
     s_wifi_rows[SETTINGS_WIFI_ROW_AUTO] =
-        settings_wifi_row(content, "Auto connect", SETTINGS_WIFI_ROW_Y0 + SETTINGS_WIFI_ROW_STEP,
+        settings_wifi_row(content, xiaomiao_text(XM_TEXT_LABEL_AUTO_CONNECT),
+                          SETTINGS_WIFI_ROW_Y0 + SETTINGS_WIFI_ROW_STEP,
                           SETTINGS_WIFI_VALUE_X, &auto_value);
     if (auto_value != NULL) {
         const bool on = (snapshot_err == ESP_OK) && snapshot.auto_connect;
-        lv_label_set_text(auto_value, on ? "On" : "Off");
+        lv_label_set_text(auto_value,
+                          xiaomiao_text(on ? XM_TEXT_STATE_ON : XM_TEXT_STATE_OFF));
         lv_obj_set_style_text_color(auto_value,
                                     lv_color_hex(on ? SETTINGS_COLOR_TEXT : SETTINGS_COLOR_MUTED),
                                     0);
     }
 
     s_wifi_rows[SETTINGS_WIFI_ROW_CONFIG] =
-        settings_wifi_row(content, "Configure",
+        settings_wifi_row(content, xiaomiao_text(XM_TEXT_LABEL_CONFIGURE),
                           SETTINGS_WIFI_ROW_Y0 + 2 * SETTINGS_WIFI_ROW_STEP,
                           SETTINGS_WIFI_VALUE_X, NULL);
 
     const bool confirming = (s_wifi_mode == SETTINGS_WIFI_CONFIRM_FORGET);
     s_wifi_rows[SETTINGS_WIFI_ROW_FORGET] =
-        settings_wifi_row(content, confirming ? "Forget network?" : "Forget network",
+        settings_wifi_row(content,
+                          xiaomiao_text(confirming ? XM_TEXT_LABEL_FORGET_CONFIRM
+                                          : XM_TEXT_LABEL_FORGET),
                           SETTINGS_WIFI_ROW_Y0 + 3 * SETTINGS_WIFI_ROW_STEP,
                           SETTINGS_WIFI_VALUE_X, NULL);
 
     s_wifi_message = settings_place_label(content, s_wifi_message_text,
-                                          &lv_font_montserrat_10, SETTINGS_COLOR_WARN, 0,
+                                          xiaomiao_font_small(), SETTINGS_COLOR_WARN, 0,
                                           SETTINGS_WIFI_MESSAGE_Y, SETTINGS_SCREEN_W,
                                           SETTINGS_WIFI_MESSAGE_H, LV_TEXT_ALIGN_CENTER);
 
-    settings_create_footer(content, confirming ? "A Yes  B No" : "A Select  B Back");
+    settings_create_footer(content,
+                           xiaomiao_text(confirming ? XM_TEXT_HINT_A_YES_B_NO
+                                           : XM_TEXT_HINT_A_SELECT_B_BACK));
     settings_wifi_highlight();
 }
 
@@ -582,53 +602,65 @@ static void settings_build_wifi(lv_obj_t *content)
  */
 static void settings_build_wifi_provisioning(lv_obj_t *content)
 {
-    settings_create_page_title(content, "Wi-Fi Setup");
+    char line[SETTINGS_WIFI_PROV_LINE_MAX];
+
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_SETTINGS_PROV_TITLE));
 
     const int32_t y0 = SETTINGS_WIFI_PROV_Y0;
-    s_prov_line_ssid = settings_place_label(content, "SSID: -", &lv_font_montserrat_10,
+
+    snprintf(line, sizeof(line), "%s: -", xiaomiao_text(XM_TEXT_LABEL_SSID));
+    s_prov_line_ssid = settings_place_label(content, line, xiaomiao_font_small(),
                                             SETTINGS_COLOR_TEXT, 4, y0, SETTINGS_SCREEN_W - 8,
                                             SETTINGS_WIFI_PROV_H, LV_TEXT_ALIGN_LEFT);
-    s_prov_line_password = settings_place_label(content, "Pass: -", &lv_font_montserrat_10,
+
+    snprintf(line, sizeof(line), "%s: -", xiaomiao_text(XM_TEXT_LABEL_PASSWORD));
+    s_prov_line_password = settings_place_label(content, line, xiaomiao_font_small(),
                                                 SETTINGS_COLOR_TITLE, 4,
                                                 y0 + SETTINGS_WIFI_PROV_STEP,
                                                 SETTINGS_SCREEN_W - 8, SETTINGS_WIFI_PROV_H,
                                                 LV_TEXT_ALIGN_LEFT);
-    s_prov_line_url = settings_place_label(content, "Open: " XIAOMIAO_WIFI_PROVISIONING_URL,
-                                           &lv_font_montserrat_10, SETTINGS_COLOR_TEXT, 4,
+
+    snprintf(line, sizeof(line), "%s: %s", xiaomiao_text(XM_TEXT_LABEL_OPEN),
+             XIAOMIAO_WIFI_PROVISIONING_URL);
+    s_prov_line_url = settings_place_label(content, line, xiaomiao_font_small(),
+                                           SETTINGS_COLOR_TEXT, 4,
                                            y0 + 2 * SETTINGS_WIFI_PROV_STEP,
                                            SETTINGS_SCREEN_W - 8, SETTINGS_WIFI_PROV_H,
                                            LV_TEXT_ALIGN_LEFT);
-    s_prov_state = settings_place_label(content, "Waiting...", &lv_font_montserrat_10,
+
+    s_prov_state = settings_place_label(content,
+                                        xiaomiao_text(XM_TEXT_SETTINGS_PROV_WAITING),
+                                        xiaomiao_font_small(),
                                         SETTINGS_COLOR_WARN, 4, y0 + 3 * SETTINGS_WIFI_PROV_STEP,
                                         SETTINGS_SCREEN_W - 8, SETTINGS_WIFI_PROV_H,
                                         LV_TEXT_ALIGN_LEFT);
 
-    settings_create_footer(content, "B Cancel");
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_CANCEL));
 }
 
 static const char *settings_wifi_setup_text(xiaomiao_wifi_setup_state_t state, esp_err_t error)
 {
     switch (state) {
     case XIAOMIAO_WIFI_SETUP_CONNECTING:
-        return "Connecting...";
+        return xiaomiao_text(XM_TEXT_SETTINGS_PROV_CONNECTING);
     case XIAOMIAO_WIFI_SETUP_CONNECTED:
-        return "Connected";
+        return xiaomiao_text(XM_TEXT_STATE_CONNECTED);
     case XIAOMIAO_WIFI_SETUP_SAVE_FAILED:
-        return "Connected, not saved";
+        return xiaomiao_text(XM_TEXT_SETTINGS_PROV_CONNECTED_NOT_SAVED);
     case XIAOMIAO_WIFI_SETUP_FAILED:
         switch (error) {
         case ESP_ERR_INVALID_STATE:
-            return "Wrong password";
+            return xiaomiao_text(XM_TEXT_SETTINGS_PROV_WRONG_PASSWORD);
         case ESP_ERR_NOT_FOUND:
-            return "Network not found";
+            return xiaomiao_text(XM_TEXT_SETTINGS_PROV_NOT_FOUND);
         case ESP_ERR_TIMEOUT:
-            return "Timed out";
+            return xiaomiao_text(XM_TEXT_SETTINGS_PROV_TIMEOUT);
         default:
-            return "Connection failed";
+            return xiaomiao_text(XM_TEXT_SETTINGS_PROV_FAILED);
         }
     case XIAOMIAO_WIFI_SETUP_IDLE:
     default:
-        return "Waiting for phone";
+        return xiaomiao_text(XM_TEXT_SETTINGS_PROV_WAIT_PHONE);
     }
 }
 
@@ -646,21 +678,24 @@ static void settings_wifi_prov_refresh(void)
          * the setup page instead of showing a page that no longer
          * describes anything (goal node 10, checkpoint 4).
          */
-        settings_set_wifi_message((info.setup_state == XIAOMIAO_WIFI_SETUP_CONNECTED)
-                                      ? "Setup complete"
-                                      : "Setup closed");
+        settings_set_wifi_message(xiaomiao_text(
+            (info.setup_state == XIAOMIAO_WIFI_SETUP_CONNECTED)
+                ? XM_TEXT_SETTINGS_MSG_SETUP_COMPLETE
+                : XM_TEXT_SETTINGS_MSG_SETUP_CLOSED));
         s_wifi_mode = SETTINGS_WIFI_LIST;
         settings_show_view(SETTINGS_VIEW_WIFI);
         return;
     }
 
-    char line[48];
+    char line[SETTINGS_WIFI_PROV_LINE_MAX * 2];
     if (s_prov_line_ssid != NULL) {
-        snprintf(line, sizeof(line), "SSID: %s", info.ssid);
+        snprintf(line, sizeof(line), "%s: %s", xiaomiao_text(XM_TEXT_LABEL_SSID),
+                 info.ssid);
         lv_label_set_text(s_prov_line_ssid, line);
     }
     if (s_prov_line_password != NULL) {
-        snprintf(line, sizeof(line), "Pass: %s", info.password);
+        snprintf(line, sizeof(line), "%s: %s", xiaomiao_text(XM_TEXT_LABEL_PASSWORD),
+                 info.password);
         lv_label_set_text(s_prov_line_password, line);
     }
     if (s_prov_state != NULL) {
@@ -718,14 +753,18 @@ static void settings_show_view(settings_view_t view)
     case SETTINGS_VIEW_DISPLAY:
         /* Hardware fact, not a missing setting: the backlight is wired
          * to VCC, so there is no brightness to store or restore. */
-        settings_build_detail(s_content, "Display", "Brightness fixed",
-                              "Backlight tied to VCC", SETTINGS_COLOR_TEXT,
-                              "No display settings");
+        settings_build_detail(s_content, xiaomiao_text(XM_TEXT_SETTINGS_DISPLAY),
+                              xiaomiao_text(XM_TEXT_SETTINGS_BRIGHTNESS_FIXED),
+                              xiaomiao_text(XM_TEXT_SETTINGS_BACKLIGHT_VCC),
+                              SETTINGS_COLOR_TEXT,
+                              xiaomiao_text(XM_TEXT_SETTINGS_NO_DISPLAY));
         break;
     case SETTINGS_VIEW_SOUND:
-        settings_build_detail(s_content, "Sound", "Audio Service",
-                              "Unavailable", SETTINGS_COLOR_WARN,
-                              "Implemented in node 12");
+        settings_build_detail(s_content, xiaomiao_text(XM_TEXT_SETTINGS_SOUND),
+                              xiaomiao_text(XM_TEXT_SETTINGS_AUDIO_SERVICE),
+                              xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE),
+                              SETTINGS_COLOR_WARN,
+                              xiaomiao_text(XM_TEXT_SETTINGS_NODE12));
         break;
     case SETTINGS_VIEW_SYSTEM:
         settings_build_system(s_content);
@@ -802,7 +841,7 @@ static void settings_wifi_toggle_auto_connect(void)
     xiaomiao_settings_t settings;
     memset(&settings, 0, sizeof(settings));
     if (xiaomiao_settings_get(&settings) != ESP_OK) {
-        settings_set_wifi_message("Settings unavailable");
+        settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_SETTINGS_UNAVAILABLE));
         settings_show_view(SETTINGS_VIEW_WIFI);
         return;
     }
@@ -812,13 +851,15 @@ static void settings_wifi_toggle_auto_connect(void)
 
     const esp_err_t store_err = xiaomiao_settings_set(&settings);
     if (store_err != ESP_OK) {
-        settings_set_wifi_message("Save failed");
+        settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_MSG_SAVE_FAILED));
         settings_show_view(SETTINGS_VIEW_WIFI);
         return;
     }
 
     const esp_err_t apply_err = xiaomiao_wifi_apply_auto_connect(target);
-    settings_set_wifi_message((apply_err == ESP_OK) ? "" : "Apply failed");
+    settings_set_wifi_message((apply_err == ESP_OK)
+                                  ? ""
+                                  : xiaomiao_text(XM_TEXT_SETTINGS_MSG_APPLY_FAILED));
     settings_show_view(SETTINGS_VIEW_WIFI);
 }
 
@@ -827,7 +868,7 @@ static void settings_wifi_start_provisioning(void)
     const esp_err_t err = xiaomiao_wifi_provisioning_start();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "provisioning start failed: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
-        settings_set_wifi_message("Setup failed");
+        settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_MSG_SETUP_FAILED));
         settings_show_view(SETTINGS_VIEW_WIFI);
         return;
     }
@@ -842,7 +883,9 @@ static void settings_wifi_forget(void)
     s_wifi_mode = SETTINGS_WIFI_LIST;
 
     const esp_err_t err = xiaomiao_wifi_forget_credentials();
-    settings_set_wifi_message((err == ESP_OK) ? "Network forgotten" : "Forget failed");
+    settings_set_wifi_message(xiaomiao_text((err == ESP_OK)
+                                                ? XM_TEXT_SETTINGS_MSG_FORGOTTEN
+                                                : XM_TEXT_SETTINGS_MSG_FORGET_FAILED));
     settings_show_view(SETTINGS_VIEW_WIFI);
 }
 
@@ -857,7 +900,7 @@ static void settings_wifi_activate(void)
         break;
     case SETTINGS_WIFI_ROW_FORGET:
         s_wifi_mode = SETTINGS_WIFI_CONFIRM_FORGET;
-        settings_set_wifi_message("Press A to confirm");
+        settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_MSG_PRESS_CONFIRM));
         settings_show_view(SETTINGS_VIEW_WIFI);
         break;
     default:
@@ -874,7 +917,7 @@ static void settings_wifi_key(uint32_t key)
         }
         else if (key == LV_KEY_ESC) {
             s_wifi_mode = SETTINGS_WIFI_LIST;
-            settings_set_wifi_message("Cancelled");
+            settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_MSG_CANCELLED));
             settings_show_view(SETTINGS_VIEW_WIFI);
         }
         return;
@@ -913,7 +956,9 @@ static void settings_handle_escape(void)
     if (s_view == SETTINGS_VIEW_WIFI_PROVISIONING) {
         /* B is the documented way out of a provisioning session. */
         const esp_err_t err = xiaomiao_wifi_provisioning_stop();
-        settings_set_wifi_message((err == ESP_OK) ? "Setup cancelled" : "Setup stop failed");
+        settings_set_wifi_message(xiaomiao_text((err == ESP_OK)
+                                                    ? XM_TEXT_SETTINGS_MSG_SETUP_CANCELLED
+                                                    : XM_TEXT_SETTINGS_MSG_SETUP_STOP_FAILED));
         settings_show_view(SETTINGS_VIEW_WIFI);
         return;
     }
@@ -1151,9 +1196,9 @@ static void settings_close(void)
              (unsigned)lv_obj_get_child_count(lv_screen_active()));
 }
 
-static const xiaomiao_app_t s_settings_app = {
+static xiaomiao_app_t s_settings_app = {
     .id = SETTINGS_APP_ID,
-    .name = SETTINGS_APP_NAME,
+    .name = NULL,
     .icon = SETTINGS_APP_ICON,
     .init = NULL,
     .open = settings_open,
@@ -1162,5 +1207,8 @@ static const xiaomiao_app_t s_settings_app = {
 
 const xiaomiao_app_t *xiaomiao_settings_app(void)
 {
+    /* The Launcher registers apps after the Font Service has run, so the
+     * localized name is resolved on the first access. */
+    s_settings_app.name = xiaomiao_text(XM_TEXT_APP_SETTINGS);
     return &s_settings_app;
 }

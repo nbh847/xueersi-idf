@@ -16,12 +16,13 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
+#include "framework/xiaomiao_fonts.h"
+#include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
 
 static const char TAG[] = "games";
 
 #define GAMES_APP_ID    "games"
-#define GAMES_APP_NAME  "Games"
 #define GAMES_APP_ICON  LV_SYMBOL_PLAY
 
 /* Same palette as the Launcher so both screens look like one product. */
@@ -32,8 +33,8 @@ static const char TAG[] = "games";
 
 /*
  * 160 x 128 layout: title, subtitle and a key hint in the footer strip.
- * The gaps are far larger than the montserrat line heights (17 / 15 /
- * 13 px), so the three texts cannot overlap.
+ * The gaps (24 / 52 / bottom -12) are larger than the localized line
+ * heights (18 px body, 14 px small), so the three texts cannot overlap.
  */
 #define GAMES_TITLE_Y     24
 #define GAMES_SUBTITLE_Y  52
@@ -88,11 +89,14 @@ static void games_open(void)
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
     s_container = container;
 
-    games_create_label(container, GAMES_APP_NAME, &lv_font_montserrat_14,
+    games_create_label(container, xiaomiao_text(XM_TEXT_APP_GAMES),
+                       xiaomiao_font_title(),
                        GAMES_COLOR_TITLE, LV_ALIGN_TOP_MID, GAMES_TITLE_Y);
-    games_create_label(container, "Coming soon", &lv_font_montserrat_12,
+    games_create_label(container, xiaomiao_text(XM_TEXT_GAMES_COMING_SOON),
+                       xiaomiao_font_body(),
                        GAMES_COLOR_SUBTITLE, LV_ALIGN_TOP_MID, GAMES_SUBTITLE_Y);
-    games_create_label(container, "B Back", &lv_font_montserrat_10,
+    games_create_label(container, xiaomiao_text(XM_TEXT_HINT_B_BACK),
+                       xiaomiao_font_small(),
                        GAMES_COLOR_HINT, LV_ALIGN_BOTTOM_MID, GAMES_HINT_Y);
 
     /*
@@ -117,9 +121,15 @@ static void games_close(void)
              (unsigned)lv_obj_get_child_count(lv_screen_active()));
 }
 
-static const xiaomiao_app_t s_games_app = {
+/*
+ * Not const: `name` is the localized text resolved when the Launcher
+ * asks for the App, i.e. after the Font Service has latched the
+ * language. Registry and Navigation only ever see the pointer returned
+ * by the accessor below.
+ */
+static xiaomiao_app_t s_games_app = {
     .id = GAMES_APP_ID,
-    .name = GAMES_APP_NAME,
+    .name = NULL,
     .icon = GAMES_APP_ICON,
     .init = NULL,
     .open = games_open,
@@ -128,5 +138,6 @@ static const xiaomiao_app_t s_games_app = {
 
 const xiaomiao_app_t *xiaomiao_games_app(void)
 {
+    s_games_app.name = xiaomiao_text(XM_TEXT_APP_GAMES);
     return &s_games_app;
 }

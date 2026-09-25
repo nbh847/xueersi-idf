@@ -17,10 +17,9 @@
  * them, and only writes Flash after an IPv4 lease arrived (goal node 10,
  * "Credential persistence").
  *
- * Teardown is ordered against the dependencies: HTTP server, DNS
- * responder, AP netif, then the Wi-Fi mode. Every path that ends a
- * session calls the same function, so success, cancel, timeout and
- * rollback all release the same set of resources.
+ * Teardown stops HTTP, DNS and AP DHCP before switching to station mode
+ * and destroying the AP netif. Normal stop and failed-start rollback
+ * both follow that order.
  */
 
 #include "xiaomiao_wifi_internal.h"
@@ -33,6 +32,7 @@
 
 #include "esp_event.h"
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_random.h"
@@ -489,6 +489,11 @@ static void ap_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
 
     switch (id) {
     case WIFI_EVENT_AP_STACONNECTED:
+        ESP_LOGI(TAG, "AP client associated, internal heap: free=%u largest8bit=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        touch_idle_timer();
+        break;
     case WIFI_EVENT_AP_STADISCONNECTED:
         /* A phone that dropped the hotspot may come back; the countdown
          * restarts instead of ending the session (goal node 10, failure
@@ -507,11 +512,31 @@ static esp_err_t start_http_server(void)
      * footprint predictable. */
     config.max_open_sockets = 3;
     config.lru_purge_enable = true;
-    config.stack_size = 5120;
+    /* IDF 6.1 creates the HTTPD stack with
+     * xTaskCreatePinnedToCoreWithCaps(), which multiplies this value by
+     * sizeof(StackType_t): the allocation is 4x stack_size bytes of
+     * contiguous internal RAM. 5120 asked for 20480 B while the largest
+     * block at this point was 18432 B (device 2026-09-25, httpd_start
+     * failed twice with ESP_ERR_HTTPD_TASK from a cold boot). 3584
+     * reserves 14336 B, which still fits that hole and is ample for the
+     * one-phone provisioning handlers. */
+    config.stack_size = 3584;
+
+    /* Record internal heap capacity around HTTPD startup. The old 5120
+     * setting failed with 0xb008 on this device; the two largest-block
+     * figures are diagnostics, not a standalone allocation verdict. */
+    ESP_LOGI(TAG, "internal heap before httpd_start: free=%u largest=%u largest8bit=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
+        ESP_LOGE(TAG, "httpd_start failed: %s (0x%x), internal heap: free=%u largest=%u largest8bit=%u",
+                 esp_err_to_name(err), (unsigned)err,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         s_server = NULL;
         return err;
     }
@@ -575,6 +600,12 @@ esp_err_t xiaomiao_wifi_provisioning_session_start(void)
     s_active = true;
     unlock();
 
+    /* WPA DEBUG prints the temporary AP password and derived key material.
+     * Keep these tags at INFO even if a local diagnostic sdkconfig still
+     * permits DEBUG at compile time. */
+    esp_log_level_set("wifi", ESP_LOG_INFO);
+    esp_log_level_set("wpa", ESP_LOG_INFO);
+
     build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
     generate_ap_password(s_ap_password, sizeof(s_ap_password));
 
@@ -617,6 +648,29 @@ esp_err_t xiaomiao_wifi_provisioning_session_start(void)
     }
 
     /*
+     * Stop the station from connecting anywhere for the length of the
+     * session. With no saved network the Service leaves the station
+     * configured with an empty SSID and an OPEN threshold, which the driver
+     * reads as "join any open access point": entering APSTA kicked off that
+     * attempt in the same millisecond as the mode switch (device
+     * 2026-09-25, "Haven't to connect to a suitable AP now!" right before
+     * the mode line). That is worth cancelling on its own merits -- the
+     * firmware should not join a stranger's open hotspot behind the user's
+     * back -- but it is NOT the cause of the phone's reason-15 timeouts:
+     * with this call in place the join still timed out after the same four
+     * seconds (device 2026-09-25, next round). The Service reconnects the
+     * saved network when the session ends, so nothing here needs the
+     * station in the meantime.
+     */
+    {
+        const esp_err_t drop_err = esp_wifi_disconnect();
+        if (drop_err != ESP_OK) {
+            ESP_LOGI(TAG, "no station attempt to cancel: %s (0x%x)", esp_err_to_name(drop_err),
+                     (unsigned)drop_err);
+        }
+    }
+
+    /*
      * No modem sleep while the page is being served: a sleeping radio
      * makes the AP slow to answer a joining phone, which showed up as
      * handshake timeouts during the first session. Restored at teardown.
@@ -646,6 +700,27 @@ esp_err_t xiaomiao_wifi_provisioning_session_start(void)
      * is the more forgiving of the two.
      */
     (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
+
+    /*
+     * Temporary diagnostics (goals/20260925-1120): the read-back says what
+     * the AP actually runs with, which is the only trustworthy account left
+     * after the stack size, the forced bandwidth and the RF recalibration
+     * were each disproved on hardware. Only the password length is logged,
+     * never the password.
+     */
+    {
+        wifi_config_t applied;
+        memset(&applied, 0, sizeof(applied));
+        if (esp_wifi_get_config(WIFI_IF_AP, &applied) == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "AP in effect: authmode=%d channel=%u ssid_len=%u pwd_len=%u max_conn=%u "
+                     "pmf_required=%d",
+                     (int)applied.ap.authmode, (unsigned)applied.ap.channel,
+                     (unsigned)applied.ap.ssid_len,
+                     (unsigned)strlen((const char *)applied.ap.password),
+                     (unsigned)applied.ap.max_connection, (int)applied.ap.pmf_cfg.required);
+        }
+    }
 
     err = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &ap_event_handler,
                                      NULL);
@@ -680,6 +755,9 @@ esp_err_t xiaomiao_wifi_provisioning_session_start(void)
     if (err != ESP_OK) {
         goto rollback_dns;
     }
+    ESP_LOGI(TAG, "internal heap after httpd_start: free=%u largest8bit=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
     if (s_idle_timer == NULL) {
         const esp_timer_create_args_t idle_args = {
@@ -713,6 +791,15 @@ rollback:
     (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &ap_event_handler);
     (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED,
                                        &ap_event_handler);
+    esp_log_level_set("wifi", ESP_LOG_INFO);
+    esp_log_level_set("wpa", ESP_LOG_INFO);
+    if (s_ap_netif != NULL) {
+        const esp_err_t dhcp_err = esp_netif_dhcps_stop(s_ap_netif);
+        if (dhcp_err != ESP_OK && dhcp_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            ESP_LOGW(TAG, "stopping AP DHCP server during rollback failed: %s (0x%x)",
+                     esp_err_to_name(dhcp_err), (unsigned)dhcp_err);
+        }
+    }
     (void)esp_wifi_set_mode(WIFI_MODE_STA);
     if (s_ap_netif != NULL) {
         esp_netif_destroy_default_wifi(s_ap_netif);
@@ -749,7 +836,7 @@ esp_err_t xiaomiao_wifi_provisioning_session_stop(void)
         (void)esp_timer_stop(s_idle_timer);
     }
 
-    /* Reverse order of creation: page, DNS, AP netif, Wi-Fi mode. */
+    /* Release the page and DNS before stopping AP networking. */
     if (s_server != NULL) {
         (void)httpd_stop(s_server);
         s_server = NULL;
@@ -760,6 +847,16 @@ esp_err_t xiaomiao_wifi_provisioning_session_stop(void)
     (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &ap_event_handler);
     (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED,
                                        &ap_event_handler);
+
+    /* AP_STOP is handled asynchronously. Stop DHCP while its netif still
+     * exists so destroying the netif cannot leave a UDP/67 server behind. */
+    if (s_ap_netif != NULL) {
+        const esp_err_t dhcp_err = esp_netif_dhcps_stop(s_ap_netif);
+        if (dhcp_err != ESP_OK && dhcp_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            ESP_LOGW(TAG, "stopping AP DHCP server failed: %s (0x%x)",
+                     esp_err_to_name(dhcp_err), (unsigned)dhcp_err);
+        }
+    }
 
     /* Back to station-only operation; the Service reconnects the saved
      * network afterwards. */
@@ -776,7 +873,14 @@ esp_err_t xiaomiao_wifi_provisioning_session_stop(void)
     /* Back to the firmware default: modem sleep on. */
     (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 
-    ESP_LOGI(TAG, "session resources released");
+    /* Leak probe (device 2026-09-25): the second session failed in
+     * httpd_start with 3828 bytes less internal free than the first,
+     * same largest block. These numbers across two sessions say how
+     * much a full open/close cycle really retains. */
+    ESP_LOGI(TAG, "session resources released, internal heap now: free=%u largest=%u largest8bit=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
     return err;
 }

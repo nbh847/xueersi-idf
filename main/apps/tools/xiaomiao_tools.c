@@ -1,13 +1,13 @@
 /*
- * Tools App (goal nodes 7 and 10).
+ * Tools App (goal nodes 7, 10 and 15C).
  *
  * Business App with an in-App menu and two navigation levels: a menu
- * page (Wi-Fi / System Info / About) plus three read-only detail pages.
- * Everything is built under the Navigation content root; the App never
- * creates, switches or deletes a global screen and never touches
+ * page (Wi-Fi / System Info / About / Assets) plus four read-only detail
+ * pages. Everything is built under the Navigation content root; the App
+ * never creates, switches or deletes a global screen and never touches
  * hardware or NVS.
  *
- * Two boundary rules drive the design:
+ * Three boundary rules drive the design:
  * - System Info shows real values read once on entry from read-only
  *   ESP-IDF APIs. No value is hardcoded (goal node 7, decision 13).
  * - The Wi-Fi page reports the real Service state: status, SSID, signal
@@ -15,6 +15,9 @@
  *   most once per second while the page is open. When the station is not
  *   connected the page shows no address and no signal, and it never
  *   touches or even asks for a password (goal node 10, checkpoint 4).
+ * - The Assets page reports the Assets, Font and Storage Service
+ *   snapshots only: no file content, no physical path and no credential
+ *   ever reaches the screen (goal node 15, "Tools -> Assets").
  *
  * Input: the App takes the focus on its own root inside the LVGL default
  * group, so LVGL sends it the key events and the Launcher's key handler
@@ -48,18 +51,21 @@
 #include "lvgl.h"
 #include "sdkconfig.h"
 
+#include "framework/xiaomiao_fonts.h"
+#include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
+#include "services/xiaomiao_assets_service.h"
+#include "services/xiaomiao_font_service.h"
+#include "services/xiaomiao_storage_service.h"
 #include "services/xiaomiao_wifi_service.h"
 
 static const char TAG[] = "tools";
 
 #define TOOLS_APP_ID    "tools"
-#define TOOLS_APP_NAME  "Tools"
 /* A list reads as "several entries" and does not clash with the Hardware
  * Test icon (LV_SYMBOL_SETTINGS). LV_SYMBOL_WRENCH does not exist in the
  * locked LVGL 9.5 (goal decision 3). */
 #define TOOLS_APP_ICON  LV_SYMBOL_LIST
-
 /* Same palette as the Launcher and PC Monitor. */
 #define TOOLS_COLOR_SCREEN_BG      0x0E1016
 #define TOOLS_COLOR_TITLE          0xC8D0E0
@@ -73,9 +79,10 @@ static const char TAG[] = "tools";
 
 /*
  * 160 x 128 layout. Title on top, footer hint at the bottom, content in
- * between. The montserrat_12 line height is 15 px so the title box is 16;
- * the montserrat_10 line height is 13 px so data rows are 15 px apart
- * (goal decision 11).
+ * between. Every text on this App is a small-font line: the token font
+ * is 15 px tall with Montserrat and 14 px with the Chinese font, so a
+ * 16 px title box and 15 px data rows fit both branches (goal
+ * decisions 11 and 15C).
  */
 #define TOOLS_SCREEN_W   160
 #define TOOLS_TITLE_Y    2
@@ -83,11 +90,13 @@ static const char TAG[] = "tools";
 #define TOOLS_FOOTER_Y   110
 #define TOOLS_FOOTER_H   14
 
+/* Four menu entries at a 22 px pitch: the last row ends at 108 px, just
+ * above the footer, so the localized labels never stack. */
 #define TOOLS_MENU_X     6
 #define TOOLS_MENU_W     148
 #define TOOLS_MENU_Y0    22
-#define TOOLS_MENU_STEP  26
-#define TOOLS_MENU_H     24
+#define TOOLS_MENU_STEP  22
+#define TOOLS_MENU_H     20
 
 #define TOOLS_INFO_Y0    20
 #define TOOLS_INFO_STEP  15
@@ -96,6 +105,11 @@ static const char TAG[] = "tools";
 #define TOOLS_INFO_NAME_W 44
 #define TOOLS_INFO_VAL_X  50
 #define TOOLS_INFO_VAL_W  106
+
+/* The Assets rows need a four-glyph name column. */
+#define TOOLS_ASSETS_NAME_W 56
+#define TOOLS_ASSETS_VAL_X  64
+#define TOOLS_ASSETS_VAL_W  92
 
 #define TOOLS_ABOUT_X    6
 #define TOOLS_ABOUT_Y    22
@@ -117,24 +131,37 @@ static const char TAG[] = "tools";
 #define TOOLS_WIFI_SIGNAL_MAX 28
 #define TOOLS_WIFI_IP_MAX     20
 
+/*
+ * Assets page: six diagnostic rows (partition state, capacity, used,
+ * font state, glyph count, SD state) filled once on entry from the
+ * Assets, Font and Storage Service snapshots. (goal node 15C)
+ */
+#define TOOLS_ASSETS_ROW_COUNT 6
+#define TOOLS_ASSETS_TEXT_MAX  20
+
 typedef enum {
     TOOLS_VIEW_MENU = 0,
     TOOLS_VIEW_WIFI,
     TOOLS_VIEW_SYSTEM_INFO,
     TOOLS_VIEW_ABOUT,
+    TOOLS_VIEW_ASSETS,
 } tools_view_t;
 
-/* Menu order is the focus order: up/down move the index, A opens it. */
-static const char *const s_menu_labels[] = {
-    "Wi-Fi",
-    "System Info",
-    "About",
+/* Menu order is the focus order: up/down move the index, A opens it.
+ * The labels are resolved through the i18n layer at build time. */
+static const xiaomiao_text_id_t s_menu_label_ids[] = {
+    XM_TEXT_MENU_WIFI,
+    XM_TEXT_TOOLS_SYSTEM_INFO,
+    XM_TEXT_TOOLS_ABOUT,
+    XM_TEXT_TOOLS_ASSETS,
 };
-#define TOOLS_MENU_ITEM_COUNT (sizeof(s_menu_labels) / sizeof(s_menu_labels[0]))
+#define TOOLS_MENU_ITEM_COUNT \
+    (sizeof(s_menu_label_ids) / sizeof(s_menu_label_ids[0]))
 
 #define TOOLS_MENU_ITEM_WIFI        0
 #define TOOLS_MENU_ITEM_SYSTEM_INFO 1
 #define TOOLS_MENU_ITEM_ABOUT       2
+#define TOOLS_MENU_ITEM_ASSETS      3
 
 /* The input root owns the focus; the content container is rebuilt per
  * view and never holds the focus itself (goal decisions 6 and 12). */
@@ -142,6 +169,7 @@ static lv_obj_t *s_root;
 static lv_obj_t *s_content;
 static lv_obj_t *s_menu_items[TOOLS_MENU_ITEM_COUNT];
 static lv_obj_t *s_wifi_values[TOOLS_WIFI_ROW_COUNT];
+static lv_obj_t *s_assets_values[TOOLS_ASSETS_ROW_COUNT];
 static lv_group_t *s_group;
 static lv_indev_t *s_keypad;
 static lv_timer_t *s_b_release_timer;
@@ -191,14 +219,14 @@ static lv_obj_t *tools_place_label(lv_obj_t *parent, const char *text,
 
 static lv_obj_t *tools_create_page_title(lv_obj_t *parent, const char *text)
 {
-    return tools_place_label(parent, text, &lv_font_montserrat_12,
+    return tools_place_label(parent, text, xiaomiao_font_small(),
                              TOOLS_COLOR_TITLE, 0, TOOLS_TITLE_Y, TOOLS_SCREEN_W,
                              TOOLS_TITLE_H, LV_TEXT_ALIGN_CENTER);
 }
 
 static void tools_create_footer(lv_obj_t *parent, const char *text)
 {
-    tools_place_label(parent, text, &lv_font_montserrat_10, TOOLS_COLOR_MUTED, 0,
+    tools_place_label(parent, text, xiaomiao_font_small(), TOOLS_COLOR_MUTED, 0,
                       TOOLS_FOOTER_Y, TOOLS_SCREEN_W, TOOLS_FOOTER_H,
                       LV_TEXT_ALIGN_CENTER);
 }
@@ -230,7 +258,7 @@ static void tools_menu_highlight(void)
 
 static void tools_build_menu(lv_obj_t *content)
 {
-    tools_create_page_title(content, TOOLS_APP_NAME);
+    tools_create_page_title(content, xiaomiao_text(XM_TEXT_APP_TOOLS));
 
     for (size_t i = 0; i < TOOLS_MENU_ITEM_COUNT; ++i) {
         const int32_t y = TOOLS_MENU_Y0 + (int32_t)i * TOOLS_MENU_STEP;
@@ -249,8 +277,8 @@ static void tools_build_menu(lv_obj_t *content)
         /* Decoration only: the root below stays the single focus object. */
         lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
-        lv_obj_t *label = tools_create_label(row, s_menu_labels[i],
-                                             &lv_font_montserrat_12,
+        lv_obj_t *label = tools_create_label(row, xiaomiao_text(s_menu_label_ids[i]),
+                                             xiaomiao_font_small(),
                                              TOOLS_COLOR_TITLE,
                                              LV_LABEL_LONG_MODE_DOTS);
         if (label != NULL) {
@@ -262,33 +290,33 @@ static void tools_build_menu(lv_obj_t *content)
     }
 
     tools_menu_highlight();
-    tools_create_footer(content, "A Open  B Back");
+    tools_create_footer(content, xiaomiao_text(XM_TEXT_HINT_A_OPEN_B_BACK));
 }
 
 static const char *tools_wifi_state_text(const xiaomiao_wifi_snapshot_t *snapshot)
 {
     switch (snapshot->state) {
     case XIAOMIAO_WIFI_CONNECTED:
-        return "Connected";
+        return xiaomiao_text(XM_TEXT_STATE_CONNECTED);
     case XIAOMIAO_WIFI_CONNECTING:
-        return "Connecting";
+        return xiaomiao_text(XM_TEXT_STATE_CONNECTING);
     case XIAOMIAO_WIFI_RETRY_WAIT:
-        return "Reconnecting";
+        return xiaomiao_text(XM_TEXT_STATE_RECONNECTING);
     case XIAOMIAO_WIFI_SCANNING:
-        return "Scanning";
+        return xiaomiao_text(XM_TEXT_STATE_SCANNING);
     case XIAOMIAO_WIFI_PROVISIONING:
-        return "Setup";
+        return xiaomiao_text(XM_TEXT_STATE_SETUP);
     case XIAOMIAO_WIFI_DISABLED:
-        return "Off";
+        return xiaomiao_text(XM_TEXT_STATE_OFF);
     case XIAOMIAO_WIFI_NO_CREDENTIALS:
-        return "Not configured";
+        return xiaomiao_text(XM_TEXT_STATE_NOT_CONFIGURED);
     case XIAOMIAO_WIFI_AUTH_FAILED:
-        return "Auth failed";
+        return xiaomiao_text(XM_TEXT_STATE_AUTH_FAILED);
     case XIAOMIAO_WIFI_ERROR:
-        return "Error";
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
     case XIAOMIAO_WIFI_DISCONNECTED:
     default:
-        return "Not connected";
+        return xiaomiao_text(XM_TEXT_STATE_NOT_CONNECTED);
     }
 }
 
@@ -297,13 +325,13 @@ static const char *tools_wifi_level_text(uint8_t level)
 {
     switch (level) {
     case 4:
-        return "Strong";
+        return xiaomiao_text(XM_TEXT_LEVEL_STRONG);
     case 3:
-        return "Good";
+        return xiaomiao_text(XM_TEXT_LEVEL_GOOD);
     case 2:
-        return "Fair";
+        return xiaomiao_text(XM_TEXT_LEVEL_FAIR);
     case 1:
-        return "Weak";
+        return xiaomiao_text(XM_TEXT_LEVEL_WEAK);
     default:
         return "-";
     }
@@ -321,7 +349,7 @@ static void tools_wifi_apply(void)
     char ip[TOOLS_WIFI_IP_MAX];
 
     if (err != ESP_OK) {
-        snprintf(status, sizeof(status), "Unavailable");
+        snprintf(status, sizeof(status), "%s", xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE));
         snprintf(ssid, sizeof(ssid), "-");
         snprintf(signal, sizeof(signal), "-");
         snprintf(ip, sizeof(ip), "-");
@@ -384,23 +412,27 @@ static void tools_wifi_timer_update(tools_view_t view)
  */
 static void tools_build_wifi(lv_obj_t *content)
 {
-    tools_create_page_title(content, "Wi-Fi");
+    tools_create_page_title(content, xiaomiao_text(XM_TEXT_MENU_WIFI));
 
-    const char *const names[TOOLS_WIFI_ROW_COUNT] = { "Status", "SSID", "Signal", "IP" };
+    const xiaomiao_text_id_t name_ids[TOOLS_WIFI_ROW_COUNT] = {
+        XM_TEXT_LABEL_STATUS, XM_TEXT_LABEL_SSID, XM_TEXT_LABEL_SIGNAL,
+        XM_TEXT_LABEL_IP
+    };
 
     for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
         const int32_t y = TOOLS_INFO_Y0 + (int32_t)i * TOOLS_INFO_STEP;
 
-        tools_place_label(content, names[i], &lv_font_montserrat_10, TOOLS_COLOR_TEXT,
+        tools_place_label(content, xiaomiao_text(name_ids[i]),
+                          xiaomiao_font_small(), TOOLS_COLOR_TEXT,
                           TOOLS_INFO_NAME_X, y, TOOLS_INFO_NAME_W, TOOLS_INFO_H,
                           LV_TEXT_ALIGN_LEFT);
-        s_wifi_values[i] = tools_place_label(content, "-", &lv_font_montserrat_10,
+        s_wifi_values[i] = tools_place_label(content, "-", xiaomiao_font_small(),
                                              TOOLS_COLOR_TITLE, TOOLS_INFO_VAL_X, y,
                                              TOOLS_INFO_VAL_W, TOOLS_INFO_H,
                                              LV_TEXT_ALIGN_RIGHT);
     }
 
-    tools_create_footer(content, "B Back");
+    tools_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
 
     /* Entering the page always shows a fresh read, not a cached one. */
     tools_wifi_apply();
@@ -424,11 +456,11 @@ static const char *tools_chip_name(esp_chip_model_t model)
     case CHIP_ESP32H2:
         return "ESP32-H2";
     default:
-        return "Unknown";
+        return xiaomiao_text(XM_TEXT_STATE_UNKNOWN);
     }
 }
 
-/* Flash capacity, or "Unknown" with the error code logged. Never a guess. */
+/* Flash capacity, or the localized unknown state with the error logged. */
 static void tools_flash_capacity(char *out, size_t out_len)
 {
     uint32_t bytes = 0;
@@ -437,20 +469,20 @@ static void tools_flash_capacity(char *out, size_t out_len)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "flash size read failed: %s (0x%x)", esp_err_to_name(err),
                  (unsigned)err);
-        snprintf(out, out_len, "Unknown");
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_UNKNOWN));
         return;
     }
 
     snprintf(out, out_len, "%u MiB", (unsigned)(bytes / (1024U * 1024U)));
 }
 
-/* PSRAM capacity; a missing PSRAM is "None", not a startup error. */
+/* PSRAM capacity; a missing PSRAM is the localized "none", not an error. */
 static void tools_psram_capacity(char *out, size_t out_len)
 {
     const size_t bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
 
     if (bytes == 0) {
-        snprintf(out, out_len, "None");
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_NONE));
         return;
     }
 
@@ -464,7 +496,7 @@ static void tools_firmware_version(char *out, size_t out_len)
 
     if (desc == NULL) {
         ESP_LOGW(TAG, "application description unavailable");
-        snprintf(out, out_len, "Unknown");
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_UNKNOWN));
         return;
     }
 
@@ -489,24 +521,26 @@ static void tools_build_system_info(lv_obj_t *content)
     char cpu[24];
     snprintf(cpu, sizeof(cpu), "%d MHz", CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
 
-    const char *const names[] = { "Chip", "CPU", "Flash", "PSRAM", "IDF", "FW" };
+    const xiaomiao_text_id_t name_ids[] = { XM_TEXT_LABEL_CHIP, XM_TEXT_LABEL_CPU,
+                                            XM_TEXT_LABEL_FLASH, XM_TEXT_LABEL_PSRAM,
+                                            XM_TEXT_LABEL_IDF, XM_TEXT_LABEL_FW };
     const char *values[] = { chip, cpu, flash, psram, esp_get_idf_version(),
                              firmware };
 
-    tools_create_page_title(content, "System Info");
+    tools_create_page_title(content, xiaomiao_text(XM_TEXT_TOOLS_SYSTEM_INFO));
 
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+    for (size_t i = 0; i < sizeof(name_ids) / sizeof(name_ids[0]); ++i) {
         const int32_t y = TOOLS_INFO_Y0 + (int32_t)i * TOOLS_INFO_STEP;
 
-        tools_place_label(content, names[i], &lv_font_montserrat_10,
+        tools_place_label(content, xiaomiao_text(name_ids[i]), xiaomiao_font_small(),
                           TOOLS_COLOR_TEXT, TOOLS_INFO_NAME_X, y,
                           TOOLS_INFO_NAME_W, TOOLS_INFO_H, LV_TEXT_ALIGN_LEFT);
-        tools_place_label(content, values[i], &lv_font_montserrat_10,
+        tools_place_label(content, values[i], xiaomiao_font_small(),
                           TOOLS_COLOR_TITLE, TOOLS_INFO_VAL_X, y,
                           TOOLS_INFO_VAL_W, TOOLS_INFO_H, LV_TEXT_ALIGN_RIGHT);
     }
 
-    tools_create_footer(content, "B Back");
+    tools_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
 }
 
 static void tools_build_about(lv_obj_t *content)
@@ -516,16 +550,21 @@ static void tools_build_about(lv_obj_t *content)
 
     tools_firmware_version(firmware, sizeof(firmware));
     snprintf(text, sizeof(text),
-             "Project: Xiaomiao\n"
-             "Firmware: %s\n"
-             "Author: ZYoungInc\n"
-             "Repo: nbh847/xueersi-idf",
-             firmware);
+             "%s: Xiaomiao\n"
+             "%s: %s\n"
+             "%s: ZYoungInc\n"
+             "%s: nbh847/xueersi-idf",
+             xiaomiao_text(XM_TEXT_LABEL_PROJECT),
+             xiaomiao_text(XM_TEXT_LABEL_FIRMWARE), firmware,
+             xiaomiao_text(XM_TEXT_LABEL_AUTHOR),
+             xiaomiao_text(XM_TEXT_LABEL_REPO));
 
-    tools_create_page_title(content, "About");
+    tools_create_page_title(content, xiaomiao_text(XM_TEXT_TOOLS_ABOUT));
 
-    /* Explicit width plus wrapping; nothing is loaded from disk or network. */
-    lv_obj_t *body = tools_create_label(content, text, &lv_font_montserrat_10,
+    /* Explicit width plus wrapping; nothing is loaded from disk or
+     * network. Four lines at the small line height fit the 70 px box in
+     * both font branches. */
+    lv_obj_t *body = tools_create_label(content, text, xiaomiao_font_small(),
                                         TOOLS_COLOR_TEXT,
                                         LV_LABEL_LONG_MODE_WRAP);
     if (body != NULL) {
@@ -534,7 +573,140 @@ static void tools_build_about(lv_obj_t *content)
         lv_obj_set_size(body, TOOLS_ABOUT_W, TOOLS_ABOUT_H);
     }
 
-    tools_create_footer(content, "B Back");
+    tools_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
+}
+
+/*
+ * Assets diagnostics (goal node 15C). The page shows only aggregated
+ * state: mount state and capacity from the Assets Service, font state and
+ * glyph count from the Font Service, SD state from the Storage Service. No
+ * file content, no physical path and no credential ever reaches the
+ * screen, and the page opens no asset handle.
+ */
+static const char *tools_assets_state_text(const xiaomiao_assets_snapshot_t *snapshot)
+{
+    if (!snapshot->mounted) {
+        return xiaomiao_text(XM_TEXT_STATE_UNMOUNTED);
+    }
+
+    switch (snapshot->state) {
+    case XIAOMIAO_ASSETS_READY:
+        return xiaomiao_text(XM_TEXT_STATE_READY);
+    case XIAOMIAO_ASSETS_DEGRADED:
+        return xiaomiao_text(XM_TEXT_STATE_DEGRADED);
+    case XIAOMIAO_ASSETS_ERROR:
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
+    case XIAOMIAO_ASSETS_UNINITIALIZED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    }
+}
+
+static const char *tools_assets_font_state_text(const xiaomiao_font_snapshot_t *snapshot)
+{
+    switch (snapshot->state) {
+    case XIAOMIAO_FONT_READY:
+        return xiaomiao_text(XM_TEXT_STATE_READY);
+    case XIAOMIAO_FONT_FALLBACK:
+        return xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE);
+    case XIAOMIAO_FONT_UNINITIALIZED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    }
+}
+
+static const char *tools_assets_sd_state_text(const xiaomiao_storage_snapshot_t *snapshot)
+{
+    switch (snapshot->state) {
+    case XIAOMIAO_STORAGE_MOUNTED:
+        return xiaomiao_text(XM_TEXT_STATE_MOUNTED);
+    case XIAOMIAO_STORAGE_ERROR:
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
+    case XIAOMIAO_STORAGE_UNINITIALIZED:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    case XIAOMIAO_STORAGE_UNMOUNTED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNMOUNTED);
+    }
+}
+
+static void tools_assets_apply(void)
+{
+    xiaomiao_assets_snapshot_t assets;
+    xiaomiao_font_snapshot_t font;
+    xiaomiao_storage_snapshot_t storage;
+
+    memset(&assets, 0, sizeof(assets));
+    memset(&font, 0, sizeof(font));
+    memset(&storage, 0, sizeof(storage));
+    xiaomiao_assets_get_snapshot(&assets);
+    xiaomiao_font_service_get_snapshot(&font);
+    xiaomiao_storage_get_snapshot(&storage);
+
+    char partition[TOOLS_ASSETS_TEXT_MAX];
+    char total[TOOLS_ASSETS_TEXT_MAX];
+    char used[TOOLS_ASSETS_TEXT_MAX];
+    char font_state[TOOLS_ASSETS_TEXT_MAX];
+    char glyphs[TOOLS_ASSETS_TEXT_MAX];
+    char sd_state[TOOLS_ASSETS_TEXT_MAX];
+
+    snprintf(partition, sizeof(partition), "%s", tools_assets_state_text(&assets));
+    snprintf(font_state, sizeof(font_state), "%s", tools_assets_font_state_text(&font));
+    snprintf(sd_state, sizeof(sd_state), "%s", tools_assets_sd_state_text(&storage));
+
+    if (assets.total_bytes == 0) {
+        snprintf(total, sizeof(total), "-");
+        snprintf(used, sizeof(used), "-");
+    }
+    else {
+        snprintf(total, sizeof(total), "%u KiB",
+                 (unsigned)(assets.total_bytes / 1024U));
+        snprintf(used, sizeof(used), "%u KiB",
+                 (unsigned)(assets.used_bytes / 1024U));
+    }
+
+    if (font.glyph_count == 0) {
+        snprintf(glyphs, sizeof(glyphs), "-");
+    }
+    else {
+        snprintf(glyphs, sizeof(glyphs), "%u", (unsigned)font.glyph_count);
+    }
+
+    const char *const values[TOOLS_ASSETS_ROW_COUNT] = { partition, total, used,
+                                                         font_state, glyphs,
+                                                         sd_state };
+    for (size_t i = 0; i < TOOLS_ASSETS_ROW_COUNT; ++i) {
+        if (s_assets_values[i] != NULL) {
+            lv_label_set_text(s_assets_values[i], values[i]);
+        }
+    }
+}
+
+static void tools_build_assets(lv_obj_t *content)
+{
+    tools_create_page_title(content, xiaomiao_text(XM_TEXT_TOOLS_ASSETS));
+
+    const xiaomiao_text_id_t name_ids[TOOLS_ASSETS_ROW_COUNT] = {
+        XM_TEXT_ASSETS_PARTITION, XM_TEXT_ASSETS_TOTAL, XM_TEXT_ASSETS_USED,
+        XM_TEXT_ASSETS_FONT, XM_TEXT_ASSETS_GLYPHS, XM_TEXT_ASSETS_SD
+    };
+
+    for (size_t i = 0; i < TOOLS_ASSETS_ROW_COUNT; ++i) {
+        const int32_t y = TOOLS_INFO_Y0 + (int32_t)i * TOOLS_INFO_STEP;
+
+        tools_place_label(content, xiaomiao_text(name_ids[i]), xiaomiao_font_small(),
+                          TOOLS_COLOR_TEXT, TOOLS_INFO_NAME_X, y,
+                          TOOLS_ASSETS_NAME_W, TOOLS_INFO_H, LV_TEXT_ALIGN_LEFT);
+        s_assets_values[i] = tools_place_label(content, "-", xiaomiao_font_small(),
+                                               TOOLS_COLOR_TITLE, TOOLS_ASSETS_VAL_X,
+                                               y, TOOLS_ASSETS_VAL_W, TOOLS_INFO_H,
+                                               LV_TEXT_ALIGN_RIGHT);
+    }
+
+    tools_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
+
+    /* Entering the page always reads the snapshots again. */
+    tools_assets_apply();
 }
 
 static void tools_show_view(tools_view_t view)
@@ -553,6 +725,9 @@ static void tools_show_view(tools_view_t view)
     for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
         s_wifi_values[i] = NULL;
     }
+    for (size_t i = 0; i < TOOLS_ASSETS_ROW_COUNT; ++i) {
+        s_assets_values[i] = NULL;
+    }
 
     s_view = view;
     tools_wifi_timer_update(view);
@@ -569,6 +744,9 @@ static void tools_show_view(tools_view_t view)
         break;
     case TOOLS_VIEW_ABOUT:
         tools_build_about(s_content);
+        break;
+    case TOOLS_VIEW_ASSETS:
+        tools_build_assets(s_content);
         break;
     }
 
@@ -604,6 +782,9 @@ static void tools_menu_activate(void)
         break;
     case TOOLS_MENU_ITEM_ABOUT:
         tools_show_view(TOOLS_VIEW_ABOUT);
+        break;
+    case TOOLS_MENU_ITEM_ASSETS:
+        tools_show_view(TOOLS_VIEW_ASSETS);
         break;
     default:
         break;
@@ -811,6 +992,9 @@ static void tools_close(void)
     for (size_t i = 0; i < TOOLS_WIFI_ROW_COUNT; ++i) {
         s_wifi_values[i] = NULL;
     }
+    for (size_t i = 0; i < TOOLS_ASSETS_ROW_COUNT; ++i) {
+        s_assets_values[i] = NULL;
+    }
     s_root = NULL;
     s_group = NULL;
     s_keypad = NULL;
@@ -823,9 +1007,9 @@ static void tools_close(void)
              (unsigned)lv_obj_get_child_count(lv_screen_active()));
 }
 
-static const xiaomiao_app_t s_tools_app = {
+static xiaomiao_app_t s_tools_app = {
     .id = TOOLS_APP_ID,
-    .name = TOOLS_APP_NAME,
+    .name = NULL,
     .icon = TOOLS_APP_ICON,
     .init = NULL,
     .open = tools_open,
@@ -834,5 +1018,8 @@ static const xiaomiao_app_t s_tools_app = {
 
 const xiaomiao_app_t *xiaomiao_tools_app(void)
 {
+    /* The Launcher registers apps after the Font Service has run, so the
+     * localized name is resolved on the first access. */
+    s_tools_app.name = xiaomiao_text(XM_TEXT_APP_TOOLS);
     return &s_tools_app;
 }

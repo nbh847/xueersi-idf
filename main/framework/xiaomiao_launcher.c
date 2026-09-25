@@ -5,6 +5,9 @@
 
 #include "esp_log.h"
 #include "xiaomiao_app.h"
+#include "xiaomiao_fonts.h"
+#include "xiaomiao_i18n.h"
+#include "xiaomiao_icons.h"
 #include "xiaomiao_navigation.h"
 
 static const char TAG[] = "launcher";
@@ -41,6 +44,8 @@ static const char TAG[] = "launcher";
 /* One grid entry: the card plus its icon, placeholder and name label. */
 typedef struct {
     lv_obj_t *card;
+    lv_obj_t *image;
+    lv_image_dsc_t image_dsc;
     lv_obj_t *icon;
     lv_obj_t *placeholder;
     lv_obj_t *name;
@@ -87,6 +92,16 @@ static void launcher_slot_set_focused(launcher_slot_t *slot, bool focused)
 static void launcher_slot_fill(launcher_slot_t *slot, const xiaomiao_app_t *app)
 {
     lv_label_set_text(slot->name, app->name != NULL ? app->name : "");
+
+    /* Built-in 16x16 asset icon first; LVGL symbol, then placeholder bar. */
+    if (app->id != NULL && xiaomiao_icons_get(app->id, &slot->image_dsc)) {
+        lv_image_set_src(slot->image, &slot->image_dsc);
+        lv_obj_clear_flag(slot->image, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(slot->icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(slot->placeholder, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_add_flag(slot->image, LV_OBJ_FLAG_HIDDEN);
 
     if (app->icon != NULL && app->icon[0] != '\0') {
         lv_label_set_text(slot->icon, app->icon);
@@ -350,8 +365,12 @@ static void launcher_build_slot(lv_obj_t *root, size_t slot, int x, int y)
     lv_obj_set_style_pad_all(entry->card, 0, 0);
     lv_obj_clear_flag(entry->card, LV_OBJ_FLAG_SCROLLABLE);
 
+    entry->image = lv_image_create(entry->card);
+    lv_obj_align(entry->image, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_add_flag(entry->image, LV_OBJ_FLAG_HIDDEN);
+
     entry->icon = lv_label_create(entry->card);
-    lv_obj_set_style_text_font(entry->icon, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(entry->icon, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(entry->icon, lv_color_hex(LAUNCHER_COLOR_ICON), 0);
     lv_obj_align(entry->icon, LV_ALIGN_TOP_MID, 0, 4);
 
@@ -366,7 +385,7 @@ static void launcher_build_slot(lv_obj_t *root, size_t slot, int x, int y)
     lv_obj_clear_flag(entry->placeholder, LV_OBJ_FLAG_SCROLLABLE);
 
     entry->name = lv_label_create(entry->card);
-    lv_obj_set_style_text_font(entry->name, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(entry->name, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(entry->name, lv_color_hex(LAUNCHER_COLOR_TEXT), 0);
     lv_obj_set_style_text_align(entry->name, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(entry->name, LAUNCHER_CARD_W - 8);
@@ -383,10 +402,11 @@ static void launcher_build_ui(lv_obj_t *root)
                                                        LAUNCHER_CARD_Y1 };
 
     lv_obj_t *title = lv_label_create(root);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(title, lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
     lv_obj_set_pos(title, LAUNCHER_TITLE_X, LAUNCHER_TITLE_Y);
     lv_obj_set_size(title, LAUNCHER_TITLE_W, LAUNCHER_TITLE_H);
+    /* Brand name: stays "Xiaomiao" in both languages. */
     lv_label_set_text(title, "Xiaomiao");
 
     for (size_t i = 0; i < XIAOMIAO_LAUNCHER_PER_PAGE; ++i) {
@@ -395,22 +415,25 @@ static void launcher_build_ui(lv_obj_t *root)
     }
 
     s_empty = lv_label_create(root);
-    lv_obj_set_style_text_font(s_empty, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(s_empty, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(s_empty, lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
     lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(s_empty, LAUNCHER_TITLE_W);
-    lv_label_set_text(s_empty, "no apps registered");
+    /* Deterministic truncation also covers the empty-state phrase. */
+    lv_label_set_long_mode(s_empty, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_text(s_empty, xiaomiao_text(XM_TEXT_LAUNCHER_EMPTY));
     lv_obj_align(s_empty, LV_ALIGN_CENTER, 0, 0);
 
     s_hint = lv_label_create(root);
-    lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_hint, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(s_hint, lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
     lv_obj_set_pos(s_hint, LAUNCHER_CARD_X0, LAUNCHER_FOOTER_Y);
     lv_obj_set_size(s_hint, LAUNCHER_CARD_W, LAUNCHER_FOOTER_H);
-    lv_label_set_text(s_hint, "A open");
+    lv_label_set_long_mode(s_hint, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_text(s_hint, xiaomiao_text(XM_TEXT_LAUNCHER_HINT));
 
     s_page = lv_label_create(root);
-    lv_obj_set_style_text_font(s_page, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_page, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_color(s_page, lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
     lv_obj_set_style_text_align(s_page, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_pos(s_page, LAUNCHER_CARD_X1, LAUNCHER_FOOTER_Y);

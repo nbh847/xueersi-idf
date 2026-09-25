@@ -76,3 +76,8 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # address keeps the Service in UNCONFIGURED and the PC Monitor on `--`.
 CONFIG_XIAOMIAO_AGENT_HOST=""
 CONFIG_XIAOMIAO_AGENT_PORT=8766
+# Assets SPIFFS (goal node 15A/15B). The production font lives at
+# /assets/fonts/xiaomiao-zh-cn.xmf (32 chars incl. mount point), which is at
+# or beyond the default 32-byte SPIFFS name limit depending on how the VFS
+# hands the path down. Raise the limit so nested asset paths open reliably.
+CONFIG_SPIFFS_OBJ_NAME_LEN=48

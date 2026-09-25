@@ -23,9 +23,11 @@
 ```bash
 idf.py set-target esp32   # 首次配置目标芯片
 idf.py build              # 配置、解析依赖并编译固件
-idf.py -p COM5 flash      # 将固件烧录到指定串口
+idf.py -p COM5 flash      # 按需构建后将固件烧录到指定串口
 idf.py -p COM5 monitor    # 查看启动日志和运行状态
 ```
+
+需要连续烧录和查看日志时，可直接执行 `idf.py -p COM5 flash monitor`；`flash` 目标会先按需构建 app、bootloader、分区表和资源镜像，无需预先单独运行 `idf.py build`。只需编译、不烧录时仍使用 `idf.py build`。
 
 可复现的全新基线构建（不依赖根目录 `build/` 与本地 `sdkconfig`，配置只来自 `sdkconfig.defaults` 和 `sdkconfig.ci`）：
 
@@ -55,7 +57,7 @@ C 代码使用 4 空格缩进，花括号沿用 `main/main.c` 的现有风格。
 
 ## 测试与验证
 
-当前没有自动化测试套件。每次改动至少需要人工执行 `idf.py build`；涉及硬件时，由人工在目标板验证启动、按键、显示刷新及受影响外设，并检查串口日志无新增错误。Agent 只执行源码、配置、diff 等静态检查并复核人工验证证据，不主动编译、烧录、监视串口或操作目标板。修改引脚、I2C 地址或协议时，同步核对并更新 `README.md`。无法完成人工验证时，在 Goal、`ROADMAP.md` 和 PR 中明确未验证范围。
+当前没有自动化测试套件。每次改动至少需要人工执行 `idf.py build`，或执行会先按需构建的 `idf.py -p COM5 flash`；涉及硬件时，由人工在目标板验证启动、按键、显示刷新及受影响外设，并检查串口日志无新增错误。Agent 只执行源码、配置、diff 等静态检查并复核人工验证证据，不主动编译、烧录、监视串口或操作目标板。修改引脚、I2C 地址或协议时，同步核对并更新 `README.md`。无法完成人工验证时，在 Goal、`ROADMAP.md` 和 PR 中明确未验证范围。
 
 影响项目状态的实现、修复或文档决策完成后，同步更新 `ROADMAP.md`；未验证事项不得记为完成。Launcher 分层改造应以现有 Dashboard 行为为回归基线，避免一次性搬迁全部代码。
 

@@ -50,15 +50,27 @@
 #include "services/xiaomiao_settings_service_selftest.h"
 #endif
 
+#if XIAOMIAO_ASSETS_SERVICE_SELF_TEST
+#include "services/xiaomiao_assets_service_selftest.h"
+#endif
+
+#if XIAOMIAO_FONT_SERVICE_SELF_TEST
+#include "services/xiaomiao_font_service_selftest.h"
+#endif
+
 #include "apps/games/xiaomiao_games.h"
 #include "apps/pc_monitor/xiaomiao_pc_monitor.h"
 #include "apps/settings/xiaomiao_settings.h"
 #include "apps/tools/xiaomiao_tools.h"
 #include "framework/xiaomiao_app.h"
+#include "framework/xiaomiao_fonts.h"
+#include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
 #include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_agent_service.h"
+#include "services/xiaomiao_assets_service.h"
+#include "services/xiaomiao_font_service.h"
 #include "services/xiaomiao_settings_service.h"
 #include "services/xiaomiao_storage_service.h"
 #include "services/xiaomiao_wifi_service.h"
@@ -136,7 +148,7 @@
 #define LCD_H_RES                   160
 #define LCD_V_RES                   128
 #define LCD_DRAW_BUF_LINES          LCD_V_RES
-#define LCD_DRAW_BUF_COUNT          3
+#define LCD_DRAW_BUF_COUNT          1
 #define LCD_DPI                     60
 #define LCD_CMD_BITS                8
 #define LCD_PARAM_BITS              8
@@ -179,9 +191,10 @@
 #define MPU_REPROBE_PERIOD_MS       1500
 #define SD_SPI_MAX_FREQ_KHZ         10000
 
-/* Hardware Test App registration (goal node 4, decision 1). */
+/* Hardware Test App registration (goal node 4, decision 1). The name is
+ * a localized string, so it is resolved in launcher_boot() instead of a
+ * literal here (goal node 15C). */
 #define HARDWARE_TEST_APP_ID        "hardware_test"
-#define HARDWARE_TEST_APP_NAME      "Hardware Test"
 #define HARDWARE_TEST_APP_ICON      LV_SYMBOL_SETTINGS
 
 /*
@@ -192,7 +205,6 @@
  */
 #define BTN_B_LONG_PRESS_MS         800
 #define BTN_B_HOLD_HINT_MS          300
-#define BTN_B_HOLD_HINT_TEXT        "Hold to exit"
 
 #define GD32_ADDR                   0x40
 #define GD32_LED1_REG               0xA0
@@ -300,11 +312,17 @@ typedef struct {
     int16_t gyro[3];
     float pitch;
     float roll;
+    /* Gesture tokens are plain ASCII state names written by the I2C poll,
+     * which starts before the Font Service, so they stay English in the
+     * model and are mapped to localized text at render time (goal node
+     * 15C). */
     char gesture[12];
     esp_err_t last_adc_err;
     esp_err_t last_gd32_err;
     esp_err_t last_mpu_err;
-    char action[32];
+    /* One localized action result; UTF-8 Chinese costs three bytes per
+     * glyph, hence the roomy budget. */
+    char action[48];
 } board_state_t;
 
 typedef struct {
@@ -336,11 +354,8 @@ static const board_button_t s_buttons[] = {
     {GPIO_NUM_12, LV_KEY_ESC, "B"},
 };
 
-static lv_draw_buf_t s_draw_buf3;
-/* How many full-screen buffers the display really got. The third one is
- * the pipelining extra, and since node 10 the Wi-Fi stack competes for
- * the same internal DMA memory, so the real number can be lower than the
- * configured one (see lvgl_display_init). */
+/* A single full-screen DMA buffer leaves internal RAM for SoftAP association
+ * and the provisioning HTTP server (goal 20260925-1120). */
 static uint8_t s_lcd_draw_buf_count = LCD_DRAW_BUF_COUNT;
 static ui_state_t s_ui;
 static board_state_t s_board = {
@@ -1081,7 +1096,9 @@ static void hardware_test_b_gesture_update(uint32_t key, bool pressed)
     }
     else if (!s_b_hint_shown && held_ms >= BTN_B_HOLD_HINT_MS) {
         s_b_hint_shown = true;
-        set_action(BTN_B_HOLD_HINT_TEXT);
+        /* Runs in the LVGL indev/loop context, so the localized text can
+         * be resolved here directly (goal node 15C). */
+        set_action(xiaomiao_text(XM_TEXT_HT_HINT_HOLD_TO_EXIT));
     }
 }
 
@@ -1315,10 +1332,10 @@ static esp_lcd_panel_io_handle_t lcd_init(void)
 static lv_display_t *lvgl_display_init(esp_lcd_panel_io_handle_t io_handle)
 {
 #if LCD_DRAW_BUF_LINES != LCD_V_RES
-#error "Triple/full refresh mode requires LCD_DRAW_BUF_LINES to equal LCD_V_RES"
+#error "Full refresh mode requires LCD_DRAW_BUF_LINES to equal LCD_V_RES"
 #endif
-#if LCD_DRAW_BUF_COUNT != 3
-#error "This build is configured for full-screen triple buffering"
+#if LCD_DRAW_BUF_COUNT != 1
+#error "This build is configured for one full-screen draw buffer"
 #endif
 
     lv_display_t *display = lv_display_create(LCD_H_RES, LCD_V_RES);
@@ -1328,42 +1345,11 @@ static lv_display_t *lvgl_display_init(esp_lcd_panel_io_handle_t io_handle)
     const uint32_t stride = lv_draw_buf_width_to_stride(LCD_H_RES, color_format);
     const size_t draw_buffer_sz = stride * LCD_DRAW_BUF_LINES;
     void *buf1 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
-    void *buf2 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
     assert(buf1);
-    assert(buf2);
-
-    /*
-     * The third full-screen buffer is the full-refresh pipelining extra.
-     * It shares the internal DMA pool with the Wi-Fi stack, so when it
-     * cannot be obtained the display drops to the two-buffer path and
-     * keeps running instead of aborting the boot. Two full-screen
-     * buffers still cover a whole refresh cycle at the target rate.
-     */
-    void *buf3 = spi_bus_dma_memory_alloc(LCD_HOST, draw_buffer_sz, 0);
-    const bool triple_buffer = (buf3 != NULL);
 
     lv_display_set_color_format(display, color_format);
     lv_display_set_dpi(display, LCD_DPI);
-    lv_display_set_buffers(display, buf1, buf2, draw_buffer_sz, LV_DISPLAY_RENDER_MODE_FULL);
-
-    if (triple_buffer) {
-        lv_result_t res = lv_draw_buf_init(&s_draw_buf3,
-                                           LCD_H_RES,
-                                           LCD_DRAW_BUF_LINES,
-                                           color_format,
-                                           stride,
-                                           buf3,
-                                           draw_buffer_sz);
-        assert(res == LV_RESULT_OK);
-        lv_display_set_3rd_draw_buffer(display, &s_draw_buf3);
-        s_lcd_draw_buf_count = 3;
-    }
-    else {
-        s_lcd_draw_buf_count = 2;
-        ESP_LOGW(TAG,
-                 "third draw buffer unavailable (%u bytes), falling back to two-buffer refresh",
-                 (unsigned)draw_buffer_sz);
-    }
+    lv_display_set_buffers(display, buf1, NULL, draw_buffer_sz, LV_DISPLAY_RENDER_MODE_FULL);
 
     lv_display_set_user_data(display, io_handle);
     lv_display_set_flush_cb(display, lvgl_flush_cb);
@@ -1379,22 +1365,24 @@ static lv_display_t *lvgl_display_init(esp_lcd_panel_io_handle_t io_handle)
     return display;
 }
 
-static const char *const s_page_names[UI_PAGE_COUNT] = {
-    "LIGHT",
-    "THERM",
-    "MOTION",
-    "LED 1",
-    "LED 2",
-    "BUZZER",
-    "MOTOR 1",
-    "MOTOR 2",
-    "SD CARD",
-    "GPIO25",
-    "GPIO26",
-    "GPIO32",
-    "GPIO33",
-    "SYSTEM",
-    "ABOUT",
+/* Page titles are localized, so the table holds text IDs and the render
+ * resolves them through the i18n layer (goal node 15C). */
+static const xiaomiao_text_id_t s_page_name_ids[UI_PAGE_COUNT] = {
+    XM_TEXT_HT_PAGE_LIGHT,
+    XM_TEXT_HT_PAGE_THERM,
+    XM_TEXT_HT_PAGE_MOTION,
+    XM_TEXT_HT_PAGE_LED1,
+    XM_TEXT_HT_PAGE_LED2,
+    XM_TEXT_HT_PAGE_BUZZER,
+    XM_TEXT_HT_PAGE_MOTOR1,
+    XM_TEXT_HT_PAGE_MOTOR2,
+    XM_TEXT_HT_PAGE_SD,
+    XM_TEXT_HT_PAGE_GPIO25,
+    XM_TEXT_HT_PAGE_GPIO26,
+    XM_TEXT_HT_PAGE_GPIO32,
+    XM_TEXT_HT_PAGE_GPIO33,
+    XM_TEXT_HT_PAGE_SYSTEM,
+    XM_TEXT_HT_PAGE_ABOUT,
 };
 
 static const uint32_t UI_YELLOW = 0xF6D34A;
@@ -1404,29 +1392,70 @@ static const uint32_t UI_RED = 0xE64B3C;
 static const uint32_t UI_CREAM = 0xFFF3B0;
 static const int UI_HISTORY_CHART_PAD_X = 2;
 static const int UI_HISTORY_CHART_PAD_Y = 3;
+/* Not a font: the size in pixels of the chart's leading point marker, so
+ * no font token applies here and the value stays as it is (goal node
+ * 15C). */
 static const int UI_HISTORY_HEAD_SIZE = 7;
 
 static void ui_refresh(void);
 static void ui_show_page(ui_page_t page, int dir);
 
+static const char *ui_page_name(ui_page_t page)
+{
+    if ((int)page < 0 || (int)page >= UI_PAGE_COUNT) {
+        return ui_page_name(UI_PAGE_LIGHT);
+    }
+
+    return xiaomiao_text(s_page_name_ids[page]);
+}
+
 static const char *short_err(esp_err_t err)
 {
     switch (err) {
     case ESP_OK:
-        return "OK";
+        return xiaomiao_text(XM_TEXT_HT_OK);
     case ESP_ERR_TIMEOUT:
-        return "TIMEOUT";
+        return xiaomiao_text(XM_TEXT_ERR_TIMEOUT);
     case ESP_ERR_NOT_FOUND:
-        return "NOT FOUND";
+        return xiaomiao_text(XM_TEXT_ERR_NOT_FOUND);
     case ESP_ERR_INVALID_STATE:
-        return "STATE";
+        return xiaomiao_text(XM_TEXT_ERR_STATE);
     case ESP_ERR_INVALID_ARG:
-        return "ARG";
+        return xiaomiao_text(XM_TEXT_ERR_ARG);
     case ESP_FAIL:
-        return "FAIL";
+        return xiaomiao_text(XM_TEXT_ERR_FAIL);
     default:
-        return "ERR";
+        return xiaomiao_text(XM_TEXT_ERR_GENERIC);
     }
+}
+
+/*
+ * The I2C poll writes plain ASCII gesture tokens into board_state.gesture
+ * and starts before the Font Service, so the model stays English and the
+ * token is mapped to localized text here at render time (goal node 15C).
+ * An unknown token degrades to the ABSENT name.
+ */
+static const char *ui_gesture_text(const char *token)
+{
+    if (strcmp(token, "READY") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_READY);
+    }
+    if (strcmp(token, "TILT UP") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_TILT_UP);
+    }
+    if (strcmp(token, "TILT DN") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_TILT_DN);
+    }
+    if (strcmp(token, "TILT R") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_TILT_R);
+    }
+    if (strcmp(token, "TILT L") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_TILT_L);
+    }
+    if (strcmp(token, "LEVEL") == 0) {
+        return xiaomiao_text(XM_TEXT_HT_GESTURE_LEVEL);
+    }
+    return xiaomiao_text(XM_TEXT_HT_GESTURE_ABSENT);
 }
 
 static lv_obj_t *ui_label(lv_obj_t *parent,
@@ -1620,6 +1649,12 @@ static unsigned ui_kb(size_t bytes)
     return (unsigned)((bytes + 512) / 1024);
 }
 
+/*
+ * About page (goal node 15C): built in the LVGL task, so the localized
+ * section headers are resolved at write time. Only the headers are
+ * translated; hardware facts, register names and unit suffixes stay
+ * English inside the mixed strings.
+ */
 static void ui_build_about_page(lv_obj_t *page)
 {
     esp_chip_info_t chip_info;
@@ -1632,37 +1667,37 @@ static void ui_build_about_page(lv_obj_t *page)
 
     snprintf(details,
              sizeof(details),
-             "Model\n"
+             "%s\n"
              "  Xiaomiao Handheld\n"
              "  ESP32-WROVER-B\n"
-             "  Author: ZYoung\n\n"
+             "  %s: ZYoung\n\n"
              "CPU\n"
              "  Xtensa LX6\n"
              "    %d MHz x%u\n"
-             "  Chip rev: %u\n\n"
-             "System\n"
+             "  %s: %u\n\n"
+             "%s\n"
              "  ESP-IDF: %s\n"
              "  FreeRTOS: %s\n"
-             "  Target: %s\n"
-             "  Build: %s\n\n"
-             "Clocks\n"
+             "  %s: %s\n"
+             "  %s: %s\n\n"
+             "%s\n"
              "  Flash: %s %s\n"
              "  PSRAM: %d MHz\n"
              "  LCD SPI2: %u MHz\n"
              "  SD SPI2: %u MHz\n"
              "  I2C0: %u kHz\n"
              "  Light ADC: 60 Hz\n\n"
-             "Storage\n"
+             "%s\n"
              "  Flash: %s\n"
              "  SRAM: %u KB\n"
              "  PSRAM: %u KB\n\n"
-             "Display\n"
+             "%s\n"
              "  ST7735 160x128\n"
              "  SPI2 %u MHz\n"
              "  RGB565 DMA x%u\n"
              "  LVGL %d.%d.%d\n\n"
-             "Board IO\n"
-             "  Keys: 6 active-low\n"
+             "%s\n"
+             "  %s: 6 active-low\n"
              "  SD: SPI2 CS22\n"
              "  ADC: 36/39/32/33\n"
              "  I2C: GD32 0x40\n"
@@ -1671,27 +1706,38 @@ static void ui_build_about_page(lv_obj_t *page)
              "       GPIO25/26 EXT\n\n"
              "wechat/tel:\n"
              "  15657325738\n",
+             xiaomiao_text(XM_TEXT_HT_ABOUT_MODEL),
+             xiaomiao_text(XM_TEXT_HT_ABOUT_AUTHOR),
              CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
              (unsigned)chip_info.cores,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_CHIP_REV),
              (unsigned)chip_info.revision,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_SYSTEM),
              esp_get_idf_version(),
              tskKERNEL_VERSION_NUMBER,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_TARGET),
              UI_TARGET_NAME,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_BUILD),
              __DATE__,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_CLOCKS),
              UI_FLASH_MODE,
              UI_FLASH_FREQ,
              CONFIG_SPIRAM_SPEED,
              (unsigned)(LCD_PIXEL_CLOCK_HZ / 1000000),
              (unsigned)(SD_SPI_MAX_FREQ_KHZ / 1000),
              (unsigned)(I2C_FREQ_HZ / 1000),
+             xiaomiao_text(XM_TEXT_HT_ABOUT_STORAGE),
              UI_FLASH_SIZE,
              ui_kb(sram_total),
              ui_kb(psram_total),
+             xiaomiao_text(XM_TEXT_HT_ABOUT_DISPLAY),
              (unsigned)(LCD_PIXEL_CLOCK_HZ / 1000000),
              (unsigned)s_lcd_draw_buf_count,
              LVGL_VERSION_MAJOR,
              LVGL_VERSION_MINOR,
-             LVGL_VERSION_PATCH);
+             LVGL_VERSION_PATCH,
+             xiaomiao_text(XM_TEXT_HT_ABOUT_BOARD_IO),
+             xiaomiao_text(XM_TEXT_HT_ABOUT_KEYS));
 
     lv_obj_t *label = lv_label_create(page);
     lv_label_set_text(label, details);
@@ -1699,7 +1745,7 @@ static void ui_build_about_page(lv_obj_t *page)
     lv_obj_set_pos(label, 8, 28);
     lv_obj_set_width(label, LCD_H_RES - 22);
     lv_obj_set_style_text_color(label, lv_color_hex(UI_BLACK), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label, xiaomiao_font_small(), 0);
     lv_obj_set_style_text_line_space(label, 1, 0);
 
     s_ui.value = lv_label_create(page);
@@ -1718,9 +1764,9 @@ static void ui_build_page_content(lv_obj_t *page)
 {
     char idx[10];
 
-    s_ui.title = ui_label(page, s_page_names[s_ui.page_id], 7, UI_BLACK, &lv_font_montserrat_14, LV_TEXT_ALIGN_LEFT);
+    s_ui.title = ui_label(page, ui_page_name(s_ui.page_id), 7, UI_BLACK, xiaomiao_font_title(), LV_TEXT_ALIGN_LEFT);
     snprintf(idx, sizeof(idx), "%02u/%02u", (unsigned)s_ui.page_id + 1, (unsigned)UI_PAGE_COUNT);
-    s_ui.status = ui_label(page, idx, 7, UI_BROWN, &lv_font_montserrat_10, LV_TEXT_ALIGN_RIGHT);
+    s_ui.status = ui_label(page, idx, 7, UI_BROWN, xiaomiao_font_small(), LV_TEXT_ALIGN_RIGHT);
     /* The global Wi-Fi indicator occupies the top-right corner, so the
      * page counter stops short of it (goal node 10, checkpoint 5). */
     lv_obj_set_size(s_ui.status, LCD_H_RES - 32, LV_SIZE_CONTENT);
@@ -1738,8 +1784,8 @@ static void ui_build_page_content(lv_obj_t *page)
         return;
     }
 
-    s_ui.value = ui_label(page, "--", 38, UI_BLACK, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
-    s_ui.sub = ui_label(page, "--", 63, UI_BROWN, &lv_font_montserrat_10, LV_TEXT_ALIGN_CENTER);
+    s_ui.value = ui_label(page, "--", 38, UI_BLACK, xiaomiao_font_body(), LV_TEXT_ALIGN_CENTER);
+    s_ui.sub = ui_label(page, "--", 63, UI_BROWN, xiaomiao_font_small(), LV_TEXT_ALIGN_CENTER);
     if (ui_page_has_history(s_ui.page_id)) {
         const uint32_t color = ui_history_color_for_page(s_ui.page_id);
         s_ui.bar = NULL;
@@ -1754,7 +1800,7 @@ static void ui_build_page_content(lv_obj_t *page)
         s_ui.chart_series = NULL;
         s_ui.bar = ui_bar(page, 0);
     }
-    s_ui.hint = ui_label(page, "L/R page", 106, UI_BLACK, &lv_font_montserrat_10, LV_TEXT_ALIGN_CENTER);
+    s_ui.hint = ui_label(page, xiaomiao_text(XM_TEXT_HT_HINT_PAGE), 106, UI_BLACK, xiaomiao_font_small(), LV_TEXT_ALIGN_CENTER);
 }
 
 static void ui_anim_x(lv_obj_t *obj, int32_t start, int32_t end, lv_anim_completed_cb_t completed_cb)
@@ -1818,9 +1864,9 @@ static void ui_refresh(void)
             lv_label_set_text_fmt(s_ui.sub, "GPIO36  RAW %04d", s_board.light_raw);
         }
         else {
-            lv_label_set_text_fmt(s_ui.sub, "ADC FAIL  %s", short_err(s_board.last_adc_err));
+            lv_label_set_text_fmt(s_ui.sub, "%s  %s", xiaomiao_text(XM_TEXT_HT_ADC_FAIL), short_err(s_board.last_adc_err));
         }
-        ui_set_hint("A sample   L/R");
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_SAMPLE));
         ui_refresh_history_chart();
         break;
     case UI_PAGE_THERM: {
@@ -1831,40 +1877,54 @@ static void ui_refresh(void)
                 lv_label_set_text_fmt(s_ui.sub, "GPIO39  RAW %04d", s_board.temp_raw);
             }
             else {
-                lv_label_set_text_fmt(s_ui.sub, "ADC FAIL  %s", short_err(s_board.last_adc_err));
+                lv_label_set_text_fmt(s_ui.sub, "%s  %s", xiaomiao_text(XM_TEXT_HT_ADC_FAIL), short_err(s_board.last_adc_err));
             }
         }
-        ui_set_hint("A sample   L/R");
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_SAMPLE));
         ui_refresh_history_chart();
         break;
     }
     case UI_PAGE_MOTION:
-        lv_label_set_text(s_ui.value, s_board.mpu_present ? s_board.gesture : "ABSENT");
+        lv_label_set_text(s_ui.value,
+                          s_board.mpu_present ? ui_gesture_text(s_board.gesture)
+                                              : xiaomiao_text(XM_TEXT_HT_GESTURE_ABSENT));
         if (s_board.mpu_present) {
             lv_label_set_text_fmt(s_ui.sub, "P%+.1f  R%+.1f  0x%02X", s_board.pitch, s_board.roll, s_board.mpu_whoami);
         }
         else {
             lv_label_set_text_fmt(s_ui.sub, "MPU 0x68  %s", short_err(s_board.last_mpu_err));
         }
-        ui_set_hint("A rescan   L/R");
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_RESCAN));
         ui_set_bar(s_board.mpu_present ? 100 : 0);
         break;
     case UI_PAGE_LED1:
         lv_label_set_text(s_ui.value, s_board.led1_on ? "ON" : "OFF");
-        lv_label_set_text(s_ui.sub, s_board.gd32_present ? "GD32 0x40  REG A0" : "GD32 0x40 ABSENT");
-        ui_set_hint("A toggle   B off");
+        if (s_board.gd32_present) {
+            lv_label_set_text(s_ui.sub, "GD32 0x40  REG A0");
+        }
+        else {
+            lv_label_set_text_fmt(s_ui.sub, "GD32 0x40 %s", xiaomiao_text(XM_TEXT_HT_ABSENT));
+        }
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_TOGGLE_B_OFF));
         ui_set_bar(s_board.led1_on ? 100 : 0);
         break;
     case UI_PAGE_LED2:
         lv_label_set_text(s_ui.value, s_board.led2_on ? "ON" : "OFF");
-        lv_label_set_text(s_ui.sub, s_board.gd32_present ? "GD32 0x40  REG A1" : "GD32 0x40 ABSENT");
-        ui_set_hint("A toggle   B off");
+        if (s_board.gd32_present) {
+            lv_label_set_text(s_ui.sub, "GD32 0x40  REG A1");
+        }
+        else {
+            lv_label_set_text_fmt(s_ui.sub, "GD32 0x40 %s", xiaomiao_text(XM_TEXT_HT_ABSENT));
+        }
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_TOGGLE_B_OFF));
         ui_set_bar(s_board.led2_on ? 100 : 0);
         break;
     case UI_PAGE_BUZZER:
         lv_label_set_text_fmt(s_ui.value, "%lu Hz", (unsigned long)s_buzzer_freq_hz);
-        lv_label_set_text(s_ui.sub, s_board.buzzer_ready ? "GPIO14 PWM" : "PWM INIT FAIL");
-        ui_set_hint("U/D Hz  A beep  B stop");
+        lv_label_set_text(s_ui.sub,
+                          s_board.buzzer_ready ? "GPIO14 PWM"
+                                               : xiaomiao_text(XM_TEXT_HT_PWM_INIT_FAIL));
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_BUZZER));
         ui_set_bar((int)((s_buzzer_freq_hz - 440) * 100 / (1760 - 440)));
         break;
     case UI_PAGE_MOTOR1:
@@ -1875,16 +1935,19 @@ static void ui_refresh(void)
             lv_label_set_text_fmt(s_ui.sub, "REG %s  DIR %u", motor == 0 ? "0E" : "06", s_board.motor_dir[motor] ? 1 : 0);
         }
         else {
-            lv_label_set_text(s_ui.sub, "GD32 0x40 ABSENT");
+            lv_label_set_text_fmt(s_ui.sub, "GD32 0x40 %s", xiaomiao_text(XM_TEXT_HT_ABSENT));
         }
-        ui_set_hint(s_board.motor_running[motor] ? "U/D PWM  A off  B stop" : "U/D PWM  A out  B dir");
+        ui_set_hint(xiaomiao_text(s_board.motor_running[motor] ? XM_TEXT_HT_HINT_MOTOR_RUN
+                                                               : XM_TEXT_HT_HINT_MOTOR_IDLE));
         ui_set_bar((int)s_board.motor_speed[motor] * 100 / 255);
         break;
     }
     case UI_PAGE_SD: {
         xiaomiao_storage_snapshot_t sd;
         xiaomiao_storage_get_snapshot(&sd);
-        lv_label_set_text(s_ui.value, sd.mounted ? "MOUNTED" : "NO CARD");
+        lv_label_set_text(s_ui.value,
+                          sd.mounted ? xiaomiao_text(XM_TEXT_HT_MOUNTED)
+                                     : xiaomiao_text(XM_TEXT_HT_NO_CARD));
         if (sd.mounted) {
             lv_label_set_text_fmt(s_ui.sub, "%s  %luMB", sd.card_name,
                                   (unsigned long)(sd.capacity_bytes / (1024ULL * 1024ULL)));
@@ -1892,20 +1955,25 @@ static void ui_refresh(void)
         else {
             lv_label_set_text_fmt(s_ui.sub, "GPIO22 CS  %s", short_err(sd.last_error));
         }
-        ui_set_hint(sd.mounted ? "B unmount  L/R" : "A rescan   L/R");
+        ui_set_hint(xiaomiao_text(sd.mounted ? XM_TEXT_HT_HINT_SD_UNMOUNT
+                                             : XM_TEXT_HT_HINT_RESCAN));
         ui_set_bar(sd.mounted ? 100 : 0);
         break;
     }
     case UI_PAGE_GPIO25:
         lv_label_set_text_fmt(s_ui.value, "%s %03u", s_board.ext_out[0] ? "PWM" : "OFF", s_board.ext_pwm[0]);
-        lv_label_set_text(s_ui.sub, s_board.ext_pwm_ready ? "GPIO25 LEDC" : "PWM INIT FAIL");
-        ui_set_hint("U/D duty  A toggle  B off");
+        lv_label_set_text(s_ui.sub,
+                          s_board.ext_pwm_ready ? "GPIO25 LEDC"
+                                                : xiaomiao_text(XM_TEXT_HT_PWM_INIT_FAIL));
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_DUTY));
         ui_set_bar((int)s_board.ext_pwm[0] * 100 / EXT_PWM_DUTY_MAX);
         break;
     case UI_PAGE_GPIO26:
         lv_label_set_text_fmt(s_ui.value, "%s %03u", s_board.ext_out[1] ? "PWM" : "OFF", s_board.ext_pwm[1]);
-        lv_label_set_text(s_ui.sub, s_board.ext_pwm_ready ? "GPIO26 LEDC" : "PWM INIT FAIL");
-        ui_set_hint("U/D duty  A toggle  B off");
+        lv_label_set_text(s_ui.sub,
+                          s_board.ext_pwm_ready ? "GPIO26 LEDC"
+                                                : xiaomiao_text(XM_TEXT_HT_PWM_INIT_FAIL));
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_DUTY));
         ui_set_bar((int)s_board.ext_pwm[1] * 100 / EXT_PWM_DUTY_MAX);
         break;
     case UI_PAGE_ADC32:
@@ -1914,9 +1982,9 @@ static void ui_refresh(void)
             lv_label_set_text_fmt(s_ui.sub, "GPIO32 RAW %04d", s_board.ext_raw[0]);
         }
         else {
-            lv_label_set_text_fmt(s_ui.sub, "ADC FAIL  %s", short_err(s_board.last_adc_err));
+            lv_label_set_text_fmt(s_ui.sub, "%s  %s", xiaomiao_text(XM_TEXT_HT_ADC_FAIL), short_err(s_board.last_adc_err));
         }
-        ui_set_hint("A sample   L/R");
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_SAMPLE));
         ui_set_bar(pct_from_raw(s_board.ext_raw[0]));
         break;
     case UI_PAGE_ADC33:
@@ -1925,18 +1993,23 @@ static void ui_refresh(void)
             lv_label_set_text_fmt(s_ui.sub, "GPIO33 RAW %04d", s_board.ext_raw[1]);
         }
         else {
-            lv_label_set_text_fmt(s_ui.sub, "ADC FAIL  %s", short_err(s_board.last_adc_err));
+            lv_label_set_text_fmt(s_ui.sub, "%s  %s", xiaomiao_text(XM_TEXT_HT_ADC_FAIL), short_err(s_board.last_adc_err));
         }
-        ui_set_hint("A sample   L/R");
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_SAMPLE));
         ui_set_bar(pct_from_raw(s_board.ext_raw[1]));
         break;
     case UI_PAGE_SYSTEM:
-        lv_label_set_text(s_ui.value, s_board.i2c_ready ? "I2C OK" : "I2C --");
+        if (s_board.i2c_ready) {
+            lv_label_set_text_fmt(s_ui.value, "I2C %s", xiaomiao_text(XM_TEXT_HT_OK));
+        }
+        else {
+            lv_label_set_text(s_ui.value, "I2C --");
+        }
         lv_label_set_text_fmt(s_ui.sub,
                               "G %s  M %s",
-                              s_board.gd32_present ? "OK" : short_err(s_board.last_gd32_err),
-                              s_board.mpu_present ? "OK" : short_err(s_board.last_mpu_err));
-        ui_set_hint("A rescan   L/R");
+                              s_board.gd32_present ? xiaomiao_text(XM_TEXT_HT_OK) : short_err(s_board.last_gd32_err),
+                              s_board.mpu_present ? xiaomiao_text(XM_TEXT_HT_OK) : short_err(s_board.last_mpu_err));
+        ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_RESCAN));
         ui_set_bar(s_board.i2c_ready ? 100 : 0);
         break;
     case UI_PAGE_ABOUT:
@@ -1951,10 +2024,11 @@ static void ui_motor_stop(uint8_t motor)
     esp_err_t err = gd32_motor_set(motor, s_board.motor_dir[motor], 0);
     if (err == ESP_OK) {
         s_board.motor_running[motor] = false;
-        set_action(motor == 0 ? "Motor1 stopped" : "Motor2 stopped");
+        set_action(xiaomiao_text(motor == 0 ? XM_TEXT_HT_ACT_MOTOR1_STOPPED
+                                            : XM_TEXT_HT_ACT_MOTOR2_STOPPED));
     }
     else {
-        set_action("Motor cmd fail");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_MOTOR_CMD_FAIL));
     }
 }
 
@@ -1966,17 +2040,18 @@ static void ui_motor_toggle(uint8_t motor)
     }
     if (s_board.motor_speed[motor] == 0) {
         s_board.last_gd32_err = ESP_ERR_INVALID_ARG;
-        set_action("PWM is zero");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_PWM_ZERO));
         return;
     }
 
     esp_err_t err = gd32_motor_set(motor, s_board.motor_dir[motor], s_board.motor_speed[motor]);
     if (err == ESP_OK) {
         s_board.motor_running[motor] = true;
-        set_action(motor == 0 ? "Motor1 output" : "Motor2 output");
+        set_action(xiaomiao_text(motor == 0 ? XM_TEXT_HT_ACT_MOTOR1_OUTPUT
+                                            : XM_TEXT_HT_ACT_MOTOR2_OUTPUT));
     }
     else {
-        set_action("Motor cmd fail");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_MOTOR_CMD_FAIL));
     }
 }
 
@@ -1984,17 +2059,21 @@ static esp_err_t ui_ext_toggle(uint8_t index)
 {
     if (s_board.ext_out[index]) {
         esp_err_t err = ext_output_set(index, false);
-        set_action(err == ESP_OK ? (index == 0 ? "GPIO25 off" : "GPIO26 off") : "PWM cmd fail");
+        set_action(xiaomiao_text(err != ESP_OK ? XM_TEXT_HT_ACT_PWM_CMD_FAIL
+                                               : (index == 0 ? XM_TEXT_HT_ACT_GPIO25_OFF
+                                                             : XM_TEXT_HT_ACT_GPIO26_OFF)));
         return err;
     }
 
     if (s_board.ext_pwm[index] == 0) {
-        set_action("Duty is zero");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_DUTY_ZERO));
         return ESP_ERR_INVALID_ARG;
     }
 
     esp_err_t err = ext_output_set(index, true);
-    set_action(err == ESP_OK ? (index == 0 ? "GPIO25 PWM" : "GPIO26 PWM") : "PWM cmd fail");
+    set_action(xiaomiao_text(err != ESP_OK ? XM_TEXT_HT_ACT_PWM_CMD_FAIL
+                                           : (index == 0 ? XM_TEXT_HT_ACT_GPIO25_PWM
+                                                         : XM_TEXT_HT_ACT_GPIO26_PWM)));
     return err;
 }
 
@@ -2008,30 +2087,35 @@ static void ui_action(void)
     case UI_PAGE_ADC32:
     case UI_PAGE_ADC33:
         err = adc_read_sensors();
-        set_action(err == ESP_OK ? "Sampled" : "ADC read fail");
+        set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_SAMPLED
+                                               : XM_TEXT_HT_ACT_ADC_READ_FAIL));
         break;
     case UI_PAGE_MOTION:
         mpu_probe_and_init(true);
         err = s_board.mpu_present ? ESP_OK : s_board.last_mpu_err;
-        set_action(s_board.mpu_present ? "MPU ready" : "MPU absent");
+        set_action(xiaomiao_text(s_board.mpu_present ? XM_TEXT_HT_ACT_MPU_READY
+                                                     : XM_TEXT_HT_ACT_MPU_ABSENT));
         break;
     case UI_PAGE_LED1:
         err = gd32_write_reg(GD32_LED1_REG, s_board.led1_on ? 0 : 1);
         if (err == ESP_OK) {
             s_board.led1_on = !s_board.led1_on;
         }
-        set_action(err == ESP_OK ? "LED1 toggled" : "LED cmd fail");
+        set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_LED1_TOGGLED
+                                               : XM_TEXT_HT_ACT_LED_CMD_FAIL));
         break;
     case UI_PAGE_LED2:
         err = gd32_write_reg(GD32_LED2_REG, s_board.led2_on ? 0 : 1);
         if (err == ESP_OK) {
             s_board.led2_on = !s_board.led2_on;
         }
-        set_action(err == ESP_OK ? "LED2 toggled" : "LED cmd fail");
+        set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_LED2_TOGGLED
+                                               : XM_TEXT_HT_ACT_LED_CMD_FAIL));
         break;
     case UI_PAGE_BUZZER:
         buzzer_beep(s_buzzer_freq_hz, 140);
-        set_action(s_board.buzzer_ready ? "Beep" : "Buzzer init fail");
+        set_action(xiaomiao_text(s_board.buzzer_ready ? XM_TEXT_HT_ACT_BEEP
+                                                      : XM_TEXT_HT_ACT_BUZZER_INIT_FAIL));
         break;
     case UI_PAGE_MOTOR1:
         ui_motor_toggle(0);
@@ -2043,7 +2127,8 @@ static void ui_action(void)
         break;
     case UI_PAGE_SD: {
         err = xiaomiao_storage_mount();
-        set_action(err == ESP_OK ? "SD mounted" : "No SD card");
+        set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_SD_MOUNTED
+                                               : XM_TEXT_HT_ACT_NO_SD_CARD));
         break;
     }
     case UI_PAGE_GPIO25:
@@ -2055,7 +2140,8 @@ static void ui_action(void)
     case UI_PAGE_SYSTEM:
         i2c_probe_devices(true);
         err = s_board.i2c_ready ? ESP_OK : ESP_ERR_INVALID_STATE;
-        set_action(s_board.i2c_ready ? "Rescanned" : "I2C init fail");
+        set_action(xiaomiao_text(s_board.i2c_ready ? XM_TEXT_HT_ACT_RESCANNED
+                                                   : XM_TEXT_HT_ACT_I2C_INIT_FAIL));
         break;
     default:
         break;
@@ -2076,10 +2162,11 @@ static void ui_cancel(void)
             if (err == ESP_OK) {
                 s_board.led1_on = false;
             }
-            set_action(err == ESP_OK ? "LED1 off" : "LED cmd fail");
+            set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_LED1_OFF
+                                                   : XM_TEXT_HT_ACT_LED_CMD_FAIL));
         }
         else {
-            set_action("LED1 off");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_LED1_OFF));
         }
         break;
     case UI_PAGE_LED2:
@@ -2088,39 +2175,42 @@ static void ui_cancel(void)
             if (err == ESP_OK) {
                 s_board.led2_on = false;
             }
-            set_action(err == ESP_OK ? "LED2 off" : "LED cmd fail");
+            set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_LED2_OFF
+                                                   : XM_TEXT_HT_ACT_LED_CMD_FAIL));
         }
         else {
-            set_action("LED2 off");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_LED2_OFF));
         }
         break;
     case UI_PAGE_BUZZER:
         buzzer_stop();
-        set_action("Buzzer stop");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_BUZZER_STOP));
         break;
     case UI_PAGE_SD: {
         esp_err_t unmount_err = xiaomiao_storage_unmount();
         if (unmount_err == ESP_OK) {
-            set_action("SD unmounted");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_SD_UNMOUNTED));
         }
         else if (unmount_err == ESP_ERR_NOT_FOUND) {
-            set_action("No SD card");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_NO_SD_CARD));
         }
         else {
-            set_action("SD unmount fail");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_SD_UNMOUNT_FAIL));
         }
         break;
     }
     case UI_PAGE_GPIO25:
         {
             esp_err_t err = ext_output_set(0, false);
-            set_action(err == ESP_OK ? "GPIO25 off" : "PWM cmd fail");
+            set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_GPIO25_OFF
+                                                   : XM_TEXT_HT_ACT_PWM_CMD_FAIL));
         }
         break;
     case UI_PAGE_GPIO26:
         {
             esp_err_t err = ext_output_set(1, false);
-            set_action(err == ESP_OK ? "GPIO26 off" : "PWM cmd fail");
+            set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_GPIO26_OFF
+                                                   : XM_TEXT_HT_ACT_PWM_CMD_FAIL));
         }
         break;
     case UI_PAGE_MOTOR1:
@@ -2129,7 +2219,7 @@ static void ui_cancel(void)
         }
         else {
             s_board.motor_dir[0] = !s_board.motor_dir[0];
-            set_action("Motor1 dir");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_MOTOR1_DIR));
         }
         break;
     case UI_PAGE_MOTOR2:
@@ -2138,12 +2228,12 @@ static void ui_cancel(void)
         }
         else {
             s_board.motor_dir[1] = !s_board.motor_dir[1];
-            set_action("Motor2 dir");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_MOTOR2_DIR));
         }
         break;
     default:
         buzzer_stop();
-        set_action("Canceled");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_CANCELED));
         break;
     }
     ui_refresh();
@@ -2155,7 +2245,7 @@ static void ui_adjust(int step)
     case UI_PAGE_BUZZER: {
         int freq = (int)s_buzzer_freq_hz + step * 110;
         s_buzzer_freq_hz = MAX(440, MIN(freq, 1760));
-        set_action("Pitch set");
+        set_action(xiaomiao_text(XM_TEXT_HT_ACT_PITCH_SET));
         break;
     }
     case UI_PAGE_MOTOR1:
@@ -2165,10 +2255,11 @@ static void ui_adjust(int step)
         s_board.motor_speed[motor] = MAX(0, MIN(speed, 255));
         if (s_board.motor_running[motor]) {
             esp_err_t err = gd32_motor_set(motor, s_board.motor_dir[motor], s_board.motor_speed[motor]);
-            set_action(err == ESP_OK ? "Power set" : "Motor cmd fail");
+            set_action(xiaomiao_text(err == ESP_OK ? XM_TEXT_HT_ACT_POWER_SET
+                                                   : XM_TEXT_HT_ACT_MOTOR_CMD_FAIL));
         }
         else {
-            set_action("Power set");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_POWER_SET));
         }
         break;
     }
@@ -2178,14 +2269,16 @@ static void ui_adjust(int step)
         int duty = s_board.ext_pwm[index] + step * 16;
         s_board.ext_pwm[index] = MAX(0, MIN(duty, EXT_PWM_DUTY_MAX));
         if (!s_board.ext_pwm_ready) {
-            set_action("PWM init fail");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_PWM_INIT_FAIL));
         }
         else if (s_board.ext_out[index]) {
             esp_err_t err = ext_output_set(index, true);
-            set_action(err == ESP_OK ? (s_board.ext_out[index] ? "Duty set" : "Duty zero") : "PWM cmd fail");
+            set_action(xiaomiao_text(err != ESP_OK ? XM_TEXT_HT_ACT_PWM_CMD_FAIL
+                                                   : (s_board.ext_out[index] ? XM_TEXT_HT_ACT_DUTY_SET
+                                                                             : XM_TEXT_HT_ACT_DUTY_ZERO)));
         }
         else {
-            set_action("Duty set");
+            set_action(xiaomiao_text(XM_TEXT_HT_ACT_DUTY_SET));
         }
         break;
     }
@@ -2361,9 +2454,15 @@ static void hardware_test_close(void)
              (unsigned)xiaomiao_launcher_page_index());
 }
 
-static const xiaomiao_app_t s_hardware_test_app = {
+/*
+ * Not const: `name` is the localized text resolved in launcher_boot(),
+ * i.e. after the Font Service has latched the language and before the
+ * Registry sees the pointer, the same pattern the Apps use (goal node
+ * 15C).
+ */
+static xiaomiao_app_t s_hardware_test_app = {
     .id = HARDWARE_TEST_APP_ID,
-    .name = HARDWARE_TEST_APP_NAME,
+    .name = NULL,
     .icon = HARDWARE_TEST_APP_ICON,
     .init = NULL,
     .open = hardware_test_open,
@@ -2438,6 +2537,10 @@ static esp_err_t launcher_boot(lv_group_t *group)
         return err;
     }
 
+    /* The localized name is resolved here, after the Font Service latched
+     * the language in app_main, and before the Registry reads it (goal
+     * node 15C). */
+    s_hardware_test_app.name = xiaomiao_text(XM_TEXT_APP_HARDWARE_TEST);
     err = launcher_register_app(&s_hardware_test_app);
     if (err != ESP_OK) {
         return err;
@@ -2629,6 +2732,28 @@ void app_main(void)
     xiaomiao_settings_service_selftest_run();
     ESP_LOGI(TAG, "Settings service self test done, halting");
     vTaskSuspend(NULL);
+#elif XIAOMIAO_ASSETS_SERVICE_SELF_TEST
+    ESP_LOGI(TAG, "Assets service self test build: skipping launcher");
+
+    /*
+     * Only SPIFFS is needed. The test drives the Service through its
+     * public interface and halts with the `ASSETS_SERVICE_SELF_TEST:
+     * PASS` marker (goal node 15A, checkpoint 3).
+     */
+    xiaomiao_assets_service_selftest_run();
+    ESP_LOGI(TAG, "Assets service self test done, halting");
+    vTaskSuspend(NULL);
+#elif XIAOMIAO_FONT_SERVICE_SELF_TEST
+    ESP_LOGI(TAG, "Font service self test build: skipping launcher");
+
+    /*
+     * Needs the flashed assets image only. The test drives the Font
+     * Service through its public interface and halts with the
+     * `FONT_SERVICE_SELF_TEST: PASS` marker (goal node 15B, CP3).
+     */
+    xiaomiao_font_service_selftest_run();
+    ESP_LOGI(TAG, "Font service self test done, halting");
+    vTaskSuspend(NULL);
 #else
     ESP_LOGI(TAG, "Xiaomiao LVGL 9.5 launcher boot");
 
@@ -2669,6 +2794,18 @@ void app_main(void)
     if (agent_err != ESP_OK) {
         ESP_LOGW(TAG, "Agent service unavailable: %s (0x%x), continuing without PC metrics",
                  esp_err_to_name(agent_err), (unsigned)agent_err);
+    }
+
+    /*
+     * The Assets Service mounts the read-only `assets` SPIFFS image
+     * (goal node 15A). It needs no hardware and no SD card: a missing
+     * or damaged image only costs built-in resources, the raw error
+     * stays in the snapshot and the boot continues into the Launcher.
+     */
+    esp_err_t assets_err = xiaomiao_assets_service_init();
+    if (assets_err != ESP_OK) {
+        ESP_LOGW(TAG, "Assets service unavailable: %s (0x%x), continuing without built-in resources",
+                 esp_err_to_name(assets_err), (unsigned)assets_err);
     }
 
     sensor_history_init();
@@ -2713,6 +2850,19 @@ void app_main(void)
     esp_timer_handle_t tick_timer = NULL;
     ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000));
+
+    /*
+     * The Font Service validates and opens the Flash Chinese font
+     * before any Chinese LVGL object can be created (goal node 15B).
+     * It consumes the Assets Service only: a missing or damaged pack
+     * leaves the Service in FALLBACK state and the UI keeps the
+     * English strings and Montserrat fonts.
+     */
+    esp_err_t font_err = xiaomiao_font_service_init();
+    if (font_err != ESP_OK) {
+        ESP_LOGW(TAG, "Chinese font unavailable: %s (0x%x), using English UI",
+                 esp_err_to_name(font_err), (unsigned)font_err);
+    }
 
     /*
      * The global Wi-Fi indicator is mounted on the top layer, so the

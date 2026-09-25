@@ -1,0 +1,51 @@
+XMF1 中文字体包 —— 源字体与产物来源记录（可复现 / 可再分发）
+================================================================
+
+字体名称     : Noto Sans CJK SC (思源黑体简体中文, Regular)
+字体版本     : Version 2.004 (name table: "2.004;GOOG;NotoSansCJKsc-Regular;ADOBE")
+上游仓库     : notofonts/noto-cjk (Google Noto CJK 官方 GitHub 镜像)
+下载 URL     : https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
+许可证       : SIL Open Font License 1.1 (OFL-1.1)
+许可证全文   : assets/LICENSES/noto-sans-cjk-ofl.txt (取自同仓库 Sans/LICENSE)
+源文件 SHA-256: 2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b
+源文件字节数 : 16437364
+下载方式     : curl -L <URL>，HTTP 200；未把源 OTF 提交进仓库，仅存放于 .tmp/node-15-assets/。
+
+说明：GitHub REST API（用于精确 commit/tag）在本次生成时因 IP 速率限制返回 403，
+未能取到 commit SHA。改用不可伪造的下载 URL（main 分支官方路径）+ 源文件 SHA-256
+作为唯一权威指纹；产物可仅凭该 SHA-256 字节级复现。许可证与源文件同仓库、一致。
+
+生成工具     : tools/font-pack/generate_font_pack.py
+运行环境     : Python 3.11.15，Pillow 11.3.0（精确 pin，见 tools/font-pack/requirements.txt）
+字符集       : GB2312 全集 7445 码点（6763 汉字 + 682 符号）+ 扩展 0 码点 = 7445 glyph
+两档位图     : 12px×36B、16px×64B（A2 2bit 灰度，行主序，MSB-first）
+栅格化规则   : 见 tools/font-pack/README.md（64x64 'L' 画布、anchor='mm' @ (32,32)、
+               固定裁剪窗口 [32-s/2,32-s/2,32+s/2,32+s/2]、量化阈值 43/128/213、
+               4 像素/字节 MSB-first）。可复现性依赖 Pillow 11.3.0。
+缺字白名单   : 语义空白类 Unicode category Zs（含 U+0020、U+3000）允许全 0；
+               U+FF3F FULLWIDTH LOW LINE 在 16px 固定窗口内墨迹落在窗口下方（12px 正常），
+               为冻结栅格规则的确定性后果，显式登记为窗口裁剪白名单，非字体缺字。
+
+完整生成命令 :
+  python tools/font-pack/generate_font_pack.py \
+    --font .tmp/node-15-assets/NotoSansCJKsc-Regular.otf \
+    --out  assets/fonts/xiaomiao-zh-cn.xmf
+
+独立校验命令 :
+  python tools/font-pack/verify_font_pack.py assets/fonts/xiaomiao-zh-cn.xmf
+  python tools/font-pack/verify_font_pack.py --self-check \
+    assets/fonts/xiaomiao-zh-cn.xmf --invalid assets/fixtures/invalid-font.xmf
+
+产物         : assets/fonts/xiaomiao-zh-cn.xmf
+  字节数     : 759456 (< 1 MiB)
+  SHA-256    : 51daac7d585aaf4d752ee081b6c2eb5221f714e9e9a4f49ad4375588454e8aba
+  payload_crc32 : 0x7795D482
+  glyph_count   : 7445
+  bitmap_12_offset : 14956   bitmap_16_offset : 282976   file_size : 759456
+  可复现性   : 连续两次运行生成命令，产物 SHA-256 均为上述值（一致）。
+
+损坏样本     : assets/fixtures/invalid-font.xmf
+  生成方式   : 由完整包拷贝后仅 XOR payload_crc32 字段 0x1C 处一个字节（其余全部合法）。
+  字节数     : 759456
+  SHA-256    : e6707febeebf6d0818adcf1807d9d8458ab4363dea64e3fbdb6568cc70899643
+  预期        : 校验器仅以 payload_crc32 不匹配为由拒绝（--self-check 已确认）。
