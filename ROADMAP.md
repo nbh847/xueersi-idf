@@ -9,7 +9,7 @@
 - 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
 - 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
-- ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，I2C `0x40` LED／电机从机协议未实现。
+- ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，未实现 I2C `0x40` 从机协议；但项目负责人于 2026-09-27 报告 Hardware Test 可在实机控制 LED1／LED2，表明板上控制链路可用，实际 GD32 固件与仓库源码的对应关系待查。
 - Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，Tools 的 Wi-Fi 页显示真实连接状态。
 
 ## 当前开发节点
@@ -38,10 +38,10 @@
 - 节点 14“Storage Service”已于 2026-09-22 完成（施工文档 `goals/20260922-0938-storage-service.md`）：MicroSD 生命周期迁到独立 `main/services/xiaomiao_storage_service.{h,c}`，`main/main.c` 启动链在 `lcd_init()` 后自动尝试首次挂载，Hardware Test MicroSD 页改用 Service 快照与挂载／卸载接口。CP5 九个实机场景全部通过（2026-09-22 15:38）：无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功（屏幕 MOUNTED + SD 29818MB）、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归。`cmd=5 R1 illegal command` 确认为 IDF v6.1 `sdmmc_init.c` 标准 SDIO 探测步骤、microSD 拒绝 CMD5 属预期正常；无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - MicroSD GPIO22 冲突修复已于 2026-09-21 21:56 通过人工复测并在节点 14 再次确认：连续 9 次 `sdmmc_card_init failed (0x107)` 均未再出现 `gpio: conflict found for GPIO[22]`，节点 14 的 10 次无卡重试同样无冲突。历史 Goal 与流水保留故障演进记录，不再把 GPIO22 冲突列为当前未解决问题。
 
-- 未验证项汇总（均已在各自 Goal 中判定为不阻塞收口）：LED、电机、MPU6050 的实机行为无证据（等节点 16 的 GD32 `0x40` 协议）；节点 9 的 `nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不改分区表的前提下构造，只按源码检查确认；节点 8 与节点 9 的末轮回归为人工口头确认，无补充串口日志。
+- 未验证项汇总（均已在各自 Goal 中判定为不阻塞收口）：电机未接入，实机行为尚不可测；MPU6050 实机行为无证据。项目负责人于 2026-09-27 13:36 报告 Hardware Test 已能控制两颗 LED（无日志）；当前仓库 GD32 源码不含相应 I2C 处理，实际板载固件来源待查。节点 9 的 `nvs_set_blob()`／`nvs_commit()` 提交失败与 `nvs_flash_init()`／`nvs_open()` 直接失败无法在不改分区表的前提下构造，只按源码检查确认；节点 8 与节点 9 的末轮回归为人工口头确认，无补充串口日志。
 - Launcher 导航改为网格 + 右键翻页（2026-09-20，非设计文档第 15 节的有序节点）：**已完成**。`←`／`→` 在行内换列，在右列按 `→` 翻到下一页同一行第一格、在左列按 `←` 翻回上一页同一行第二格；目标页没有对应行时回退到该页第一行第一格，只有目标页没有任何 App 才保持焦点（因此 5 个 App 时第 1 页第 2 行也能进入第 2 页）；`↑`／`↓` 在页内换行且不翻页。每页 4 格时从第 1 格按 `→` 两次即翻页。网格几何、每页容量、槽位的行优先对应关系、卡片布局与配色均未改。实机验证：自测固件输出 `LAUNCHER_SELF_TEST: PASS`（引导路径 13 步，数量边界含缺行回退断言），普通固件实机行为与五个 App、Hardware Test 15 页由人工确认无问题（无补充串口日志）。本变更经三次模型修订（首版“左右线性 ±1 且删掉上下键”→ “外侧列翻页 + 上下换行” → “翻页保持同一行” → 最终“同行优先、缺行回退”），施工文档为 `goals/20260920-2015-launcher-lr-paging.md`。
 - 节点 10“Wi-Fi Service”已于 2026-09-21 完成。交付独立 Wi-Fi Service（状态快照、扫描、异步连接、1／2／5／10／30 秒退避重连、忘记网络、RSSI 采样）、受密码保护的 SoftAP + 手机网页配网、取得 IPv4 后才提交的私有凭据存储、Settings／Tools 接入、全局四档 Wi-Fi 图标、双缓冲自适应降级与自定义 4 MB Flash 分区表。人工构建、烧录及手动测试由项目负责人确认全部通过；新增确认未附日志的证据类型和仅静态复核的故障路径已在 Goal 中区分。施工、核对与验证记录见 `goals/20260920-2210-wifi-service.md`。
-- GD32 实机固件与 README 中 `0x40` 协议的对应关系待确认，不阻塞不依赖 LED、电机的 v0.1 框架开发。
+- 实机 LED1／LED2 已确认可控；板载 GD32 固件与仓库源码的对应关系仍待查。电机未接入，行为不可实测；该项不阻塞不依赖 LED／电机的 v0.1 框架开发。
 
 ## 有序开发节点
 
@@ -63,12 +63,12 @@
 - [ ] 节点 13：首个正式游戏。（已推迟，2026-09-21 确认不在本设备做游戏）
 - [x] 节点 14：Storage Service。
 - [x] 节点 15：Assets、文件系统与 Flash 完整中文字库。（总纲 `goals/20260922-1701-assets-filesystem-chinese-font.md`；15A～15D 的 CP1～CP7 于 2026-09-25 全部闭环：两套自测实机 `PASS`、无 SD 中文目视通过、26 组开合无泄漏、有 SD 对照、全 UI 回归和 merged bin 从 `0x0` 烧录后中文正常；字体损坏英文回退注入经负责人决定跳过，不作通过项。烧录轮次发现的配网回归已在独立 Goal 修复并完成连续两次换网验证。）
-- [ ] 节点 16：GD32 `0x40` 协议补全。
+- [ ] 节点 16：GD32 `0x40` 协议源码补齐与实机固件差异核对。2026-09-27 调研确认原理图芯片为 `GD32F350G8U6TR`；仓库及对应公开源码目录均未找到 I2C 从机实现，公开 Release 也未找到单独标注的 GD32 镜像。`letsgo.bin` 是否包含 GD32 固件未知。LED1／LED2 实机可控（负责人报告，无日志），与当前源码的对应关系待确认；电机未接入，无法实测。
 
 ## 下一步
 
-1. GD32 `0x40` 协议补全（节点 16）完成前，LED、电机、MPU6050 的实机回归无法闭环；节点 4 已按设备缺失处理并记录，不重复阻塞后续节点。
-2. 节点 16（GD32 `0x40` 协议补全）可按计划继续；节点 12（Audio Service）与节点 13（首个正式游戏）继续推迟。节点 15 与配网回归均已收口，证据分别见节点 15 总纲和 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。
+1. 节点 16 先取得板载 GD32 固件来源或可核对的固件读取结果，查明其与仓库源码的差异，再补齐 `0x40` 处理；电机协议按 README 与 ESP32 发送格式核对实现。电机未接入，实机动作保持未验证；MPU6050 实机行为另行标记为未验证。
+2. 节点 16（GD32 `0x40` 协议源码补齐与实机差异核对）可按计划继续；节点 12（Audio Service）与节点 13（首个正式游戏）继续推迟。节点 15 与配网回归均已收口，证据分别见节点 15 总纲和 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。
    后续固件人工复验可直接执行 `idf.py -p COM5 flash monitor`：`flash` 会先按需构建，构建成功后烧录并进入串口监视，无需单独预先运行 `idf.py build`。
 3. 可选补录（均不影响已完成节点的结论，固件已在板上，重新 `idf.py -p COM5 monitor` 即可，无需重新编译或烧录）：节点 4 缺失设备页的实际显示文本与挂载失败后重新进入 App 的行为；节点 5 的“连续 10 轮”与“5 轮双 App 交替”样本；节点 8 与节点 9 末轮回归的补充串口日志。
 4. 已实现的设计约束（供后续复核，非待办）：B 的短按／长按判定基于 `keypad_read_cb()` 的按下与释放边沿加独立状态机，动作在 LVGL 循环执行，`lv_indev_set_long_press_time()` 全局设置未改；Launcher 的“App 打开态转发 B”分支对已取得输入焦点的 App 不可达。细节见 `goals/20260920-1053-hardware-test-app.md` 与 `goals/20260920-1159-games-placeholder.md`。
@@ -86,7 +86,7 @@
 - **内部 RAM 预算偏紧（两次配网已实机验证）**：节点 10 时三块 40 KB 显示 DMA 缓冲与 Wi-Fi 共存失败，曾接受两块；本次 HTTPD 运行期间出现 AP 关联响应发送失败。当前单块 40,960 字节全屏 DMA 缓冲释放内部 RAM，人工日志确认连续两次配网成功；第二次 HTTPD 启动后 `largest8bit=36864`，两次停止后 free 未单调下降。显示刷新性能、更多轮同条件内存回归和重启持久化待验证；历史双缓冲验收仍保留在节点 10 Goal。
 - **配网热点的已接受行为**：热点 SSID 固定为 `Xiaomiao-XXXX`，密码每次会话随机生成。手机若缓存过同名热点的旧密码，首次关联会使用旧密码并失败，需要重新输入设备屏幕上的本次密码。该行为是固定 SSID 与随机密码安全要求叠加的结果，已确认保持现状；定位与取舍见 `goals/20260920-2210-wifi-service.md` 第 17 条。
 - **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
-- README 记录的 GD32 LED／电机协议已被 ESP32 代码使用，但 GD32 工程缺少对应实现，双 MCU 联调结果待确认。
+- README 记录的 GD32 LED／电机协议已被 ESP32 代码使用；项目负责人报告两颗 LED 已可由实机控制，但 GD32 工程缺少对应 I2C 实现，板载固件与仓库源码对应关系待查。电机未接入，实机行为未验证。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
 - PC Monitor 的指标已接入节点 11 的 Agent Service 快照：真实数据需在被忽略的本地 `sdkconfig` 配置 Agent IPv4、PC 端启动 `pc-agent/` 并与设备同处一个局域网；可提交配置地址为空，固件在该状态显示 `--` 且不受影响。节点 11 的 CP5 已由项目负责人确认通过；该确认未附新增串口日志、截图或资源数值。首版固定 Agent IPv4，不支持服务发现；后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。
 

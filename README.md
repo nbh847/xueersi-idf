@@ -24,8 +24,8 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 - MicroSD 重复挂载失败时出现的 GPIO22 冲突警告已修复，并于 2026-09-21 通过连续 9 次失败重试实机验证；Hardware Test 关闭、重开和返回 Launcher 均正常。SD 卡已于 2026-09-22 到货，节点 14 已完成完整实机验收（2026-09-22 15:38）：无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功（SD 29818MB）、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归。
 - MicroSD 生命周期已迁移到独立 Storage Service（`main/services/xiaomiao_storage_service.{h,c}`，节点 14，已完成实机验收）：普通启动在共享 SPI2 建立后自动尝试挂载一次，失败不阻塞进入 Launcher；`Hardware Test` 的 MicroSD 页读取 Service 快照显示状态，A 重试挂载、B 安全卸载；挂载点固定 `/sdcard`，禁止自动格式化，GPIO22 修复时序保留在 Service 内部。
 - ESP32 侧固件已包含并完成实机验证的 Wi-Fi Service：进入 `Settings → Wi-Fi` 可启动配网，设备会开启受密码保护的临时热点 `Xiaomiao-XXXX`（密码每次会话随机生成），手机连接后在浏览器打开 `http://192.168.4.1` 选网并输入密码；凭据只在试连成功取得 IPv4 后才会保存，密码错误或超时不会覆盖原有网络。保存后支持开机自动连接与断线退避重连，`Configure` 可更换网络，`Forget network` 只删除 Wi-Fi 凭据。`Tools → Wi-Fi` 显示真实的连接状态、SSID、信号档位与 IPv4 地址，屏幕右上角在所有页面显示四档 Wi-Fi 状态图标。详细验证记录见 `goals/20260920-2210-wifi-service.md`。
-- GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现下文所述的 I2C `0x40` LED、电机从机协议。
-- ESP32 侧已经按原有 `0x40` 协议实现 LED、电机命令；该协议与 GD32 实机固件的联调状态仍待确认。欢迎大家测试或在 Issues 里提出建议。
+- GD32 固件仍在开发中，当前仓库源码主要完成 USB CDC、UART 桥和 ESP32 自动下载控制，未包含下文所述的 I2C `0x40` 从机处理代码。
+- ESP32 侧已按原有 `0x40` 协议实现 LED、电机命令。项目负责人于 2026-09-27 报告可在 Hardware Test 中实机控制 LED1／LED2；但板上 GD32 固件与仓库源码的对应关系待查。电机目前未接入，实机行为未验证。欢迎大家测试或在 Issues 里提出建议。
 
 ## PC Agent（电脑端，节点 11）
 
@@ -97,9 +97,11 @@ ESP32-WROVER-B
 
 ```text
 ESP32 = 主控 / UI / Python 运行环境 / 屏幕 / SD / 按键 / 传感器
-GD32  = USB 串口桥 / ESP32 自动烧录控制 / 电机与 LED 控制器
+GD32  = USB 串口桥 / ESP32 自动烧录控制 / 通过 I2C 接收 LED 与电机命令并驱动对应输出
 0x40  = GD32 的 I2C 从机地址
 ```
+
+这是板级职责分工，不代表仓库中的 GD32 固件已经实现了全部功能。ESP32 是 I2C 主机，向地址 `0x40` 发送 LED／电机命令；LED 与电机输出由 GD32 一侧负责。因此 Hardware Test 能控制 LED，说明板上的控制链路可用，但不等于 ESP32 直接驱动了 LED，也不能证明仓库里的 GD32 源码就是当前板载固件。
 
 ***
 
@@ -237,7 +239,9 @@ MPU6050：0x68，未安装时不会出现在 scan 结果中
 
 ## 3. GD32F350G8 连接关系
 
-GD32F350G8 在板上承担以下功能：
+原理图标注的完整芯片型号为 `GD32F350G8U6TR`。GigaDevice 官方 [GD32F350 产品选型页](https://www.gigadevice.com/product/mcu/main-stream-mcus/gd32f3-series/gd32f350)列出的规格为 Cortex-M4 内核、最高 108 MHz、64 KB Flash、8 KB SRAM、QFN28 封装。
+
+按原理图，GD32 在板级承担以下功能：
 
 ```text
 1. USB CDC 串口桥
@@ -259,6 +263,12 @@ GD32F350G8 在板上承担以下功能：
 | 电机 PWM      | HR8833 / DRV8833         |
 | LED 控制      | LED1 / LED2              |
 | SWD         | TMS / TCK / RST / GND 焊盘 |
+
+### 固件源码与板载行为核对（2026-09-27）
+
+仓库 [GD32_firmware 工程](https://github.com/ZyoungInc/xueersi-idf/tree/main/GD32_firmware)当前实现 USB CDC、USART1 串口桥，以及 DTR／RTS 对 ESP32 IO0／EN 的自动下载控制；源码中没有 I2C `0x40` 从机处理。查阅公开仓库对应目录也未找到该协议实现。项目负责人报告 Hardware Test 已能控制 LED1／LED2，但该实机行为与当前可见 GD32 源码之间的对应关系尚未查明。
+
+公开 Release 中未找到单独标注为 GD32 的固件镜像。虽然有名为 `letsgo.bin` 的资产，但其内容是否包含 GD32 固件未经确认，不能据此认定它实现了 `0x40` 协议。电机目前未接入，电机行为未验证。
 
 ***
 
