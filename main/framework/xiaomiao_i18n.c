@@ -26,7 +26,7 @@ static const char TEXT_UNKNOWN[] = "???";
 
 static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_APP_GAMES] = "Games",
-    [XM_TEXT_APP_PC_MONITOR] = "PC Monitor",
+    [XM_TEXT_APP_PC_MONITOR] = "Monitor",
     [XM_TEXT_APP_TOOLS] = "Tools",
     [XM_TEXT_APP_SETTINGS] = "Settings",
     [XM_TEXT_APP_HARDWARE_TEST] = "Hardware Test",
@@ -46,9 +46,20 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_PM_TITLE_CPU_RAM] = "CPU / RAM",
     [XM_TEXT_PM_TITLE_GPU_TEMP] = "GPU / Temp",
     [XM_TEXT_PM_LABEL_TEMP] = "TEMP",
-    [XM_TEXT_PM_LABEL_GPU_TEMP] = "GPU T",
-    [XM_TEXT_PM_LABEL_CPU_TEMP] = "CPU T",
+    [XM_TEXT_PM_LABEL_GPU_TEMP] = "GPU",
+    [XM_TEXT_PM_LABEL_CPU_TEMP] = "CPU",
     [XM_TEXT_PM_HINT] = "B Back   < > Switch",
+
+    [XM_TEXT_PM_TITLE_ZHIPU] = "Zhipu",
+    [XM_TEXT_PM_TITLE_CODEX] = "Codex",
+    [XM_TEXT_PM_QUOTA_HINT] = "B Back  < >",
+    [XM_TEXT_PM_QUOTA_PENDING] = "PENDING",
+    [XM_TEXT_QUOTA_STATE_OK] = "OK",
+    [XM_TEXT_QUOTA_STATE_LOGIN] = "LOGIN",
+    [XM_TEXT_QUOTA_STATE_SRC] = "SRC",
+    [XM_TEXT_QUOTA_STATE_BAD] = "BAD",
+    [XM_TEXT_QUOTA_STATE_STALE] = "STALE",
+    [XM_TEXT_QUOTA_STATE_OFF] = "OFF",
 
     [XM_TEXT_STATE_CONNECTED] = "Connected",
     [XM_TEXT_STATE_CONNECTING] = "Connecting",
@@ -250,7 +261,7 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
 
 static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_APP_GAMES] = "游戏",
-    [XM_TEXT_APP_PC_MONITOR] = "电脑监控",
+    [XM_TEXT_APP_PC_MONITOR] = "监控",
     [XM_TEXT_APP_TOOLS] = "工具",
     [XM_TEXT_APP_SETTINGS] = "设置",
     [XM_TEXT_APP_HARDWARE_TEST] = "硬件测试",
@@ -273,6 +284,17 @@ static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_PM_LABEL_GPU_TEMP] = "温度",
     [XM_TEXT_PM_LABEL_CPU_TEMP] = "温度",
     [XM_TEXT_PM_HINT] = "B 返回   < > 换页",
+
+    [XM_TEXT_PM_TITLE_ZHIPU] = "智谱",
+    [XM_TEXT_PM_TITLE_CODEX] = "Codex",
+    [XM_TEXT_PM_QUOTA_HINT] = "B 返回  < >",
+    [XM_TEXT_PM_QUOTA_PENDING] = "待同步",
+    [XM_TEXT_QUOTA_STATE_OK] = "OK",
+    [XM_TEXT_QUOTA_STATE_LOGIN] = "LOGIN",
+    [XM_TEXT_QUOTA_STATE_SRC] = "SRC",
+    [XM_TEXT_QUOTA_STATE_BAD] = "BAD",
+    [XM_TEXT_QUOTA_STATE_STALE] = "STALE",
+    [XM_TEXT_QUOTA_STATE_OFF] = "OFF",
 
     [XM_TEXT_STATE_CONNECTED] = "已连接",
     [XM_TEXT_STATE_CONNECTING] = "连接中",

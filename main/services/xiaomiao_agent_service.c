@@ -15,6 +15,12 @@
  * comes from the Wi-Fi Service public snapshot, which stays the single
  * source of connectivity truth.
  *
+ * Two Workers share the one discovered Agent link (host + HTTP port):
+ * the metrics Worker owns discovery and the 1-second metrics poll, the
+ * quota Worker runs its own slower schedule for both providers. They
+ * never block each other, and each provider keeps an independent state
+ * and snapshot (AI quota pages goal, decision 7).
+ *
  * Failure discipline (goal node 11, "Failure paths"): a response only
  * commits when the schema matches v1, status is ok or degraded, the
  * core CPU/memory fields are finite numbers inside 0..100 and the
@@ -51,7 +57,7 @@
 
 static const char TAG[] = "agent_svc";
 
-/* `http://` + longest IPv4 + `:port` + the metrics path + terminator. */
+/* `http://` + longest IPv4 + `:port` + the longest path + terminator. */
 #define AGENT_URL_MAX 64
 /* Fixed LAN discovery endpoint shared with pc-agent/monitor.py. */
 #define AGENT_DISCOVERY_PORT 8767
@@ -82,6 +88,26 @@ static const char TAG[] = "agent_svc";
 #define AGENT_TASK_STACK_BYTES 4096
 #define AGENT_TASK_PRIORITY 3
 
+/* Quota responses hold two short windows, so 1 KB is a generous ceiling
+ * and anything longer is rejected whole (AI quota pages goal, CP2). */
+#define AGENT_QUOTA_RESPONSE_MAX 1024
+/* Quota freshness: a successful round older than this reads as STALE.
+ * Deliberately separate from the 3-second PC metrics rule. */
+#define AGENT_QUOTA_STALE_US (180 * 1000 * 1000)
+/* Low-frequency plan: 30 s while a provider is healthy, 10 s while it
+ * is degraded, so recovery is noticed without hammering the Agent. */
+#define AGENT_QUOTA_POLL_ONLINE_MS 30000
+#define AGENT_QUOTA_POLL_RETRY_MS 10000
+#define AGENT_QUOTA_TASK_STACK_BYTES 4096
+#define AGENT_QUOTA_TASK_PRIORITY 3
+/* The console ``MM-DD HH:MM`` text is 11 characters; longer or shorter
+ * text from the Agent is treated as unknown instead of being rendered. */
+#define AGENT_QUOTA_TIME_CHARS 11
+/* Upper bound of a plausible countdown (~400 days); anything larger is
+ * invalid data, not a value to render. */
+#define AGENT_QUOTA_MAX_RESET_IN_SEC (400LL * 24 * 60 * 60)
+#define AGENT_METRICS_PATH "/api/v1/pc/metrics"
+
 /* Validity windows shared by the percent and temperature fields. */
 #define AGENT_PERCENT_MIN 0.0f
 #define AGENT_PERCENT_MAX 100.0f
@@ -105,13 +131,60 @@ typedef struct {
     int64_t committed_us;
 } agent_metrics_t;
 
+/*
+ * One committed quota window. Labels and validity flags follow the
+ * public xiaomiao_quota_window_t; this is the cached copy the Service
+ * keeps after a successful round.
+ */
+typedef struct {
+    bool present;
+    bool remaining_valid;
+    uint8_t remaining_percent;
+    bool reset_time_valid;
+    char reset_at_local[XIAOMIAO_QUOTA_TIME_MAX];
+    bool reset_countdown_valid;
+    int64_t reset_in_sec;
+} agent_quota_window_t;
+
+/*
+ * One provider's quota cache. The window values survive failed rounds
+ * so the UI can keep showing them under STALE/OFF; only ``state``,
+ * ``http_status`` and ``last_error`` follow the latest round.
+ */
+typedef struct {
+    bool has_snapshot;
+    int64_t committed_us;
+    agent_quota_window_t windows[XIAOMIAO_QUOTA_WINDOWS];
+    xiaomiao_quota_state_t state;
+    int http_status;
+    esp_err_t last_error;
+} agent_quota_t;
+
+/* Canonical window labels and routes per provider; the JSON is matched
+ * against these instead of trusting any label or array order. */
+static const char *const AGENT_QUOTA_LABELS[XIAOMIAO_QUOTA_PROVIDER_COUNT][XIAOMIAO_QUOTA_WINDOWS] = {
+    {"5H", "7D"},
+    {"5H", "1W"},
+};
+static const char *const AGENT_QUOTA_IDS[XIAOMIAO_QUOTA_PROVIDER_COUNT] = {"codex", "zhipu"};
+static const char *const AGENT_QUOTA_PATHS[XIAOMIAO_QUOTA_PROVIDER_COUNT] = {
+    "/api/v1/quotas/codex",
+    "/api/v1/quotas/zhipu",
+};
+/* Longest dotted-quad plus terminator. */
+#define AGENT_HOST_MAX 16
+
 static SemaphoreHandle_t s_lock;
 
 static bool s_initialized;
 static esp_err_t s_init_result = ESP_OK;
 
-/* Worker-owned; cleared whenever Wi-Fi or the HTTP endpoint fails. */
-static char s_metrics_url[AGENT_URL_MAX];
+/* Protected by s_lock: the single discovered Agent link, written by the
+ * metrics Worker when discovery succeeds and cleared whenever Wi-Fi or
+ * the HTTP endpoint fails. The quota Worker only reads it. */
+static char s_agent_host[AGENT_HOST_MAX];
+static uint16_t s_agent_port;
+static bool s_agent_link_ready;
 
 /* Protected by s_lock. */
 static xiaomiao_agent_state_t s_state = XIAOMIAO_AGENT_UNINITIALIZED;
@@ -120,17 +193,23 @@ static bool s_has_committed;
 static uint32_t s_consecutive_failures;
 static int s_http_status;
 static esp_err_t s_last_error = ESP_OK;
+static agent_quota_t s_quotas[XIAOMIAO_QUOTA_PROVIDER_COUNT];
 
 /* ------------------------------------------------------------------ */
 /* 1. LAN service discovery                                             */
 /* ------------------------------------------------------------------ */
 
-static bool agent_build_url(const char *host, uint16_t port)
+/*
+ * Build one request URL from a discovered Agent address. The buffer is
+ * caller-owned, so a local copy can never be overwritten mid-request by
+ * the other Worker.
+ */
+static bool agent_build_url(const char *host, uint16_t port, const char *path,
+                            char *out_url, size_t capacity)
 {
-    const int written = snprintf(s_metrics_url, sizeof(s_metrics_url),
-                                 "http://%s:%u/api/v1/pc/metrics",
-                                 host, (unsigned int)port);
-    return written > 0 && written < (int)sizeof(s_metrics_url);
+    const int written = snprintf(out_url, capacity, "http://%s:%u%s",
+                                 host, (unsigned int)port, path);
+    return written > 0 && written < (int)capacity;
 }
 
 /*
@@ -138,8 +217,14 @@ static bool agent_build_url(const char *host, uint16_t port)
  * to this socket, so the datagram source address is the current PC IPv4;
  * the six-byte payload advertises its HTTP port.
  */
-static esp_err_t agent_discover(void)
+static esp_err_t agent_discover(char *host_out, size_t host_capacity, uint16_t *port_out)
 {
+    if (host_out == NULL || port_out == NULL || host_capacity == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    host_out[0] = '\0';
+    *port_out = 0;
+
     const int discovery_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (discovery_socket < 0) {
         ESP_LOGW(TAG, "discovery socket failed: errno=%d", errno);
@@ -215,19 +300,18 @@ static esp_err_t agent_discover(void)
         }
 
         const uint32_t host = ntohl(source_address.sin_addr.s_addr);
-        char host_text[16];
-        const int host_length = snprintf(host_text, sizeof(host_text),
+        const int host_length = snprintf(host_out, host_capacity,
                                          "%u.%u.%u.%u",
                                          (unsigned int)((host >> 24) & 0xff),
                                          (unsigned int)((host >> 16) & 0xff),
                                          (unsigned int)((host >> 8) & 0xff),
                                          (unsigned int)(host & 0xff));
-        if (host_length <= 0 || host_length >= (int)sizeof(host_text) ||
-            !agent_build_url(host_text, http_port)) {
+        if (host_length <= 0 || host_length >= (int)host_capacity) {
             result = ESP_ERR_INVALID_SIZE;
             break;
         }
-        ESP_LOGI(TAG, "discovered agent at %s:%u", host_text,
+        *port_out = http_port;
+        ESP_LOGI(TAG, "discovered agent at %s:%u", host_out,
                  (unsigned int)http_port);
         result = ESP_OK;
         break;
@@ -249,14 +333,15 @@ cleanup:
  * response; *out_status keeps the HTTP code for the snapshot, 0 when
  * the request never completed.
  */
-static bool agent_fetch(char *body, size_t capacity, size_t *out_len, int *out_status)
+static bool agent_fetch(const char *url, char *body, size_t capacity,
+                        size_t *out_len, int *out_status)
 {
     bool ok = false;
     *out_status = 0;
     *out_len = 0;
 
     const esp_http_client_config_t config = {
-        .url = s_metrics_url,
+        .url = url,
         .timeout_ms = AGENT_HTTP_TIMEOUT_MS,
         .buffer_size = 1024,
         .buffer_size_tx = 512,
@@ -427,6 +512,197 @@ static agent_parse_result_t agent_parse_metrics(const char *body, agent_metrics_
 }
 
 /* ------------------------------------------------------------------ */
+/* 3b. Quota JSON validation                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Map a label onto the provider's canonical window slot. Only the two
+ * target labels are accepted; an unknown label is dropped instead of
+ * being placed by array order (AI quota pages goal, decision 2).
+ */
+static bool agent_quota_label_index(uint8_t provider, const char *label, uint8_t *out_index)
+{
+    if (label == NULL) {
+        return false;
+    }
+    for (uint8_t index = 0; index < XIAOMIAO_QUOTA_WINDOWS; ++index) {
+        if (strcmp(label, AGENT_QUOTA_LABELS[provider][index]) == 0) {
+            *out_index = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * Accept only the exact ``MM-DD HH:MM`` shape with plausible digits, so
+ * a broken or hostile Agent response cannot push arbitrary text to the
+ * screen; anything else leaves the reset time unknown.
+ */
+static bool agent_quota_time_text(const cJSON *item, char *out_text, size_t capacity)
+{
+    if (!cJSON_IsString(item) || item->valuestring == NULL) {
+        return false;
+    }
+    const size_t length = strlen(item->valuestring);
+    if (length != (size_t)AGENT_QUOTA_TIME_CHARS || length >= capacity) {
+        return false;
+    }
+    const char *text = item->valuestring;
+    for (size_t index = 0; index < length; ++index) {
+        const char character = text[index];
+        if (index == 2) {
+            if (character != '-') {
+                return false;
+            }
+            continue;
+        }
+        if (index == 5) {
+            if (character != ' ') {
+                return false;
+            }
+            continue;
+        }
+        if (index == 8) {
+            if (character != ':') {
+                return false;
+            }
+            continue;
+        }
+        if (character < '0' || character > '9') {
+            return false;
+        }
+    }
+    const int hour = (text[6] - '0') * 10 + (text[7] - '0');
+    const int minute = (text[9] - '0') * 10 + (text[10] - '0');
+    if (hour > 23 || minute > 59) {
+        return false;
+    }
+    memcpy(out_text, text, length + 1);
+    return true;
+}
+
+/*
+ * Validate one quota response. Returns the state to record; only OK
+ * fills ``out_windows``. Statuses come from the frozen API v1 contract,
+ * an unexpected provider ID or a response without a single target window
+ * is invalid data, and everything is bounded before it is copied.
+ */
+static xiaomiao_quota_state_t agent_parse_quota(const char *body, uint8_t provider,
+                                                agent_quota_window_t *out_windows)
+{
+    cJSON *root = cJSON_Parse(body);
+    if (root == NULL) {
+        return XIAOMIAO_QUOTA_INVALID_DATA;
+    }
+
+    xiaomiao_quota_state_t result = XIAOMIAO_QUOTA_INVALID_DATA;
+    const cJSON *schema = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+    const cJSON *status = cJSON_GetObjectItemCaseSensitive(root, "status");
+    const cJSON *data = cJSON_GetObjectItemCaseSensitive(root, "data");
+
+    do {
+        if (!cJSON_IsNumber(schema) || schema->valuedouble != 1.0) {
+            break;
+        }
+        if (!cJSON_IsString(status) || status->valuestring == NULL) {
+            break;
+        }
+        if (!cJSON_IsObject(data)) {
+            break;
+        }
+        const cJSON *provider_id = cJSON_GetObjectItemCaseSensitive(data, "provider_id");
+        if (!cJSON_IsString(provider_id) || provider_id->valuestring == NULL ||
+            strcmp(provider_id->valuestring, AGENT_QUOTA_IDS[provider]) != 0) {
+            break;
+        }
+
+        if (strcmp(status->valuestring, "auth_required") == 0) {
+            result = XIAOMIAO_QUOTA_AUTH_REQUIRED;
+            break;
+        }
+        if (strcmp(status->valuestring, "unavailable") == 0) {
+            result = XIAOMIAO_QUOTA_UNAVAILABLE;
+            break;
+        }
+        if (strcmp(status->valuestring, "stale") == 0) {
+            result = XIAOMIAO_QUOTA_STALE;
+            break;
+        }
+        if (strcmp(status->valuestring, "invalid_data") == 0) {
+            result = XIAOMIAO_QUOTA_INVALID_DATA;
+            break;
+        }
+        if (strcmp(status->valuestring, "ok") != 0) {
+            break;
+        }
+
+        const cJSON *windows = cJSON_GetObjectItemCaseSensitive(data, "windows");
+        if (!cJSON_IsArray(windows) || cJSON_GetArraySize(windows) > XIAOMIAO_QUOTA_WINDOWS) {
+            break;
+        }
+
+        uint8_t matched = 0;
+        const cJSON *window = NULL;
+        cJSON_ArrayForEach(window, windows) {
+            if (!cJSON_IsObject(window)) {
+                continue;
+            }
+            const cJSON *label = cJSON_GetObjectItemCaseSensitive(window, "label");
+            uint8_t index = 0;
+            if (!agent_quota_label_index(provider,
+                                         cJSON_IsString(label) ? label->valuestring : NULL,
+                                         &index)) {
+                continue;
+            }
+            if (out_windows[index].present) {
+                continue; /* first occurrence of a label wins */
+            }
+
+            agent_quota_window_t parsed;
+            memset(&parsed, 0, sizeof(parsed));
+            parsed.present = true;
+
+            const cJSON *remaining = cJSON_GetObjectItemCaseSensitive(window, "remaining_percent");
+            if (cJSON_IsNumber(remaining)) {
+                const double value = remaining->valuedouble;
+                if (isfinite((float)value) && value >= 0.0 && value <= 100.0) {
+                    parsed.remaining_valid = true;
+                    /* The range check above guarantees a non-negative
+                     * value, so a bias-and-truncate rounds it without
+                     * pulling in libm rounding. */
+                    parsed.remaining_percent = (uint8_t)(value + 0.5);
+                }
+            }
+
+            parsed.reset_time_valid = agent_quota_time_text(
+                cJSON_GetObjectItemCaseSensitive(window, "reset_at_local"),
+                parsed.reset_at_local, sizeof(parsed.reset_at_local));
+
+            const cJSON *countdown = cJSON_GetObjectItemCaseSensitive(window, "reset_in_sec");
+            if (cJSON_IsNumber(countdown)) {
+                const double value = countdown->valuedouble;
+                if (isfinite((float)value) && value >= 0.0 &&
+                    value <= (double)AGENT_QUOTA_MAX_RESET_IN_SEC) {
+                    parsed.reset_countdown_valid = true;
+                    parsed.reset_in_sec = (int64_t)value;
+                }
+            }
+
+            out_windows[index] = parsed;
+            ++matched;
+        }
+        if (matched == 0) {
+            break;
+        }
+        result = XIAOMIAO_QUOTA_OK;
+    } while (false);
+
+    cJSON_Delete(root);
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
 /* 4. Snapshot                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -442,6 +718,41 @@ static void agent_unlock(void)
     if (s_lock != NULL) {
         xSemaphoreGive(s_lock);
     }
+}
+
+/*
+ * The discovered Agent link is published once by the metrics Worker and
+ * read by the quota Worker. Both go through the lock so a request never
+ * starts against a host that was just cleared.
+ */
+static void agent_store_link(const char *host, uint16_t port)
+{
+    agent_lock();
+    snprintf(s_agent_host, sizeof(s_agent_host), "%s", host);
+    s_agent_port = port;
+    s_agent_link_ready = true;
+    agent_unlock();
+}
+
+static void agent_clear_link(void)
+{
+    agent_lock();
+    s_agent_host[0] = '\0';
+    s_agent_port = 0;
+    s_agent_link_ready = false;
+    agent_unlock();
+}
+
+static bool agent_link_copy(char *host_out, size_t host_capacity, uint16_t *port_out)
+{
+    agent_lock();
+    const bool ready = s_agent_link_ready;
+    if (ready) {
+        snprintf(host_out, host_capacity, "%s", s_agent_host);
+        *port_out = s_agent_port;
+    }
+    agent_unlock();
+    return ready;
 }
 
 static void agent_set_state(xiaomiao_agent_state_t state)
@@ -476,6 +787,51 @@ static void agent_commit(const agent_metrics_t *metrics)
 }
 
 /* ------------------------------------------------------------------ */
+/* 4b. Quota state                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Record a failed or non-ok round. The cached windows and their commit
+ * time stay untouched, so the UI keeps the last known values and the
+ * state tells it how much to trust them (goal decision 4).
+ */
+static void agent_quota_note_result(uint8_t provider, int http_status, esp_err_t error,
+                                    xiaomiao_quota_state_t state)
+{
+    agent_lock();
+    agent_quota_t *quota = &s_quotas[provider];
+    quota->state = state;
+    quota->http_status = http_status;
+    quota->last_error = error;
+    agent_unlock();
+}
+
+static void agent_quota_commit(uint8_t provider, const agent_quota_window_t *windows,
+                               int http_status)
+{
+    agent_lock();
+    agent_quota_t *quota = &s_quotas[provider];
+    memcpy(quota->windows, windows, sizeof(quota->windows));
+    quota->has_snapshot = true;
+    quota->committed_us = esp_timer_get_time();
+    quota->state = XIAOMIAO_QUOTA_OK;
+    quota->http_status = http_status;
+    quota->last_error = ESP_OK;
+    agent_unlock();
+}
+
+/* Called when the shared Agent link is gone: both providers read OFF
+ * but keep their last values (goal failure paths). */
+static void agent_quota_mark_link_down(void)
+{
+    agent_lock();
+    for (uint8_t provider = 0; provider < XIAOMIAO_QUOTA_PROVIDER_COUNT; ++provider) {
+        s_quotas[provider].state = XIAOMIAO_QUOTA_OFFLINE;
+    }
+    agent_unlock();
+}
+
+/* ------------------------------------------------------------------ */
 /* 5. Worker                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -488,10 +844,16 @@ static bool agent_wifi_is_online(void)
     return wifi.state == XIAOMIAO_WIFI_CONNECTED && wifi.ipv4.addr != 0;
 }
 
+/*
+ * Metrics Worker: owns discovery and the 1-second PC metrics poll. It is
+ * the only writer of the shared Agent link, so the quota Worker always
+ * follows the same host and port.
+ */
 static void agent_worker_task(void *argument)
 {
     (void)argument;
     static char body[AGENT_RESPONSE_MAX];
+    char url[AGENT_URL_MAX];
     bool agent_discovered = false;
 
     for (;;) {
@@ -500,7 +862,7 @@ static void agent_worker_task(void *argument)
              * get_snapshot() retires the display on its own, so nothing
              * else to clear here (goal node 11, failure paths). */
             agent_discovered = false;
-            s_metrics_url[0] = '\0';
+            agent_clear_link();
             agent_set_state(XIAOMIAO_AGENT_WIFI_OFFLINE);
             vTaskDelay(pdMS_TO_TICKS(AGENT_POLL_OFFLINE_MS));
             continue;
@@ -508,13 +870,24 @@ static void agent_worker_task(void *argument)
 
         if (!agent_discovered) {
             agent_set_state(XIAOMIAO_AGENT_DISCOVERING);
-            const esp_err_t discovery_result = agent_discover();
+            char host[AGENT_HOST_MAX];
+            uint16_t port = 0;
+            const esp_err_t discovery_result = agent_discover(host, sizeof(host), &port);
             if (discovery_result != ESP_OK) {
                 agent_note_failure(0, discovery_result);
                 agent_set_state(XIAOMIAO_AGENT_RETRY_WAIT);
+                agent_clear_link();
                 vTaskDelay(pdMS_TO_TICKS(AGENT_RETRY_WAIT_MS));
                 continue;
             }
+            if (!agent_build_url(host, port, AGENT_METRICS_PATH, url, sizeof(url))) {
+                agent_note_failure(0, ESP_ERR_INVALID_SIZE);
+                agent_set_state(XIAOMIAO_AGENT_RETRY_WAIT);
+                agent_clear_link();
+                vTaskDelay(pdMS_TO_TICKS(AGENT_RETRY_WAIT_MS));
+                continue;
+            }
+            agent_store_link(host, port);
             agent_discovered = true;
         }
 
@@ -522,7 +895,7 @@ static void agent_worker_task(void *argument)
 
         size_t body_len = 0;
         int http_status = 0;
-        const bool fetched = agent_fetch(body, sizeof(body), &body_len, &http_status);
+        const bool fetched = agent_fetch(url, body, sizeof(body), &body_len, &http_status);
 
         bool success = false;
         if (fetched) {
@@ -542,7 +915,7 @@ static void agent_worker_task(void *argument)
         } else {
             agent_note_failure(http_status, ESP_FAIL);
             agent_discovered = false;
-            s_metrics_url[0] = '\0';
+            agent_clear_link();
         }
 
         if (success) {
@@ -551,6 +924,67 @@ static void agent_worker_task(void *argument)
             agent_set_state(XIAOMIAO_AGENT_RETRY_WAIT);
             vTaskDelay(pdMS_TO_TICKS(AGENT_RETRY_WAIT_MS));
         }
+    }
+}
+
+/*
+ * Quota Worker: independent low-frequency schedule for both providers.
+ * It reads the link published by the metrics Worker, requests the two
+ * quota routes in turn and never touches the metrics snapshot, its
+ * success time or the shared link.
+ */
+static void agent_quota_worker_task(void *argument)
+{
+    (void)argument;
+    static char body[AGENT_QUOTA_RESPONSE_MAX];
+    char host[AGENT_HOST_MAX];
+
+    for (;;) {
+        uint16_t port = 0;
+        if (!agent_link_copy(host, sizeof(host), &port)) {
+            agent_quota_mark_link_down();
+            vTaskDelay(pdMS_TO_TICKS(AGENT_QUOTA_POLL_RETRY_MS));
+            continue;
+        }
+
+        bool all_ok = true;
+        for (uint8_t provider = 0; provider < XIAOMIAO_QUOTA_PROVIDER_COUNT; ++provider) {
+            char url[AGENT_URL_MAX];
+            if (!agent_build_url(host, port, AGENT_QUOTA_PATHS[provider], url, sizeof(url))) {
+                agent_quota_note_result(provider, 0, ESP_ERR_INVALID_SIZE,
+                                        XIAOMIAO_QUOTA_OFFLINE);
+                all_ok = false;
+                continue;
+            }
+
+            size_t body_len = 0;
+            int http_status = 0;
+            if (!agent_fetch(url, body, sizeof(body), &body_len, &http_status)) {
+                /* No completed HTTP 200: either the Agent is gone (OFF)
+                 * or an older Agent build lacks the route (SRC). Neither
+                 * case involves invalid JSON. */
+                agent_quota_note_result(
+                    provider, http_status,
+                    http_status == 0 ? ESP_FAIL : ESP_ERR_NOT_SUPPORTED,
+                    http_status == 0 ? XIAOMIAO_QUOTA_OFFLINE : XIAOMIAO_QUOTA_UNAVAILABLE);
+                all_ok = false;
+                continue;
+            }
+
+            agent_quota_window_t windows[XIAOMIAO_QUOTA_WINDOWS];
+            memset(windows, 0, sizeof(windows));
+            const xiaomiao_quota_state_t parsed = agent_parse_quota(body, provider, windows);
+            if (parsed == XIAOMIAO_QUOTA_OK) {
+                agent_quota_commit(provider, windows, http_status);
+                ESP_LOGD(TAG, "quota %s updated", AGENT_QUOTA_IDS[provider]);
+            } else {
+                agent_quota_note_result(provider, http_status, ESP_ERR_INVALID_RESPONSE, parsed);
+                all_ok = false;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(all_ok ? AGENT_QUOTA_POLL_ONLINE_MS
+                                        : AGENT_QUOTA_POLL_RETRY_MS));
     }
 }
 
@@ -582,6 +1016,15 @@ esp_err_t xiaomiao_agent_service_init(void)
         s_last_error = ESP_ERR_NO_MEM;
         s_init_result = ESP_ERR_NO_MEM;
         return s_init_result;
+    }
+
+    /* The quota Worker is a separate low-frequency task, so a quota round
+     * or its timeout can never delay the 1-second metrics poll. If it
+     * cannot be created, only the quota routes stay OFF while boot and
+     * the PC metrics keep working (AI quota pages goal, CP2). */
+    if (xTaskCreate(agent_quota_worker_task, "agent_quota", AGENT_QUOTA_TASK_STACK_BYTES,
+                    NULL, AGENT_QUOTA_TASK_PRIORITY, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "quota worker not started, quota routes stay offline");
     }
 
     ESP_LOGI(TAG, "agent service ready, waiting for Wi-Fi discovery");
@@ -618,6 +1061,61 @@ esp_err_t xiaomiao_agent_get_snapshot(xiaomiao_agent_snapshot_t *out_snapshot)
     out_snapshot->consecutive_failures = s_consecutive_failures;
     out_snapshot->http_status = s_http_status;
     out_snapshot->last_error = s_last_error;
+    agent_unlock();
+    return ESP_OK;
+}
+
+esp_err_t xiaomiao_agent_get_quota_snapshot(xiaomiao_quota_provider_t provider,
+                                            xiaomiao_quota_snapshot_t *out_snapshot)
+{
+    if (out_snapshot == NULL ||
+        (unsigned int)provider >= (unsigned int)XIAOMIAO_QUOTA_PROVIDER_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+
+    agent_lock();
+    const agent_quota_t *quota = &s_quotas[provider];
+    xiaomiao_quota_state_t state = quota->state;
+    const bool within = quota->has_snapshot &&
+                        (now_us - quota->committed_us) <= AGENT_QUOTA_STALE_US;
+    if (!s_agent_link_ready) {
+        /* No discovered Agent (or no Wi-Fi): OFF, old values kept. */
+        state = XIAOMIAO_QUOTA_OFFLINE;
+    } else if (quota->has_snapshot && !within &&
+               (state == XIAOMIAO_QUOTA_OK || state == XIAOMIAO_QUOTA_UNAVAILABLE ||
+                state == XIAOMIAO_QUOTA_INVALID_DATA)) {
+        /* The 180-second quota freshness rule, independent of the
+         * 3-second PC metrics rule. AUTH_REQUIRED keeps its own meaning
+         * and keeps showing LOGIN with the last known values. */
+        state = XIAOMIAO_QUOTA_STALE;
+    }
+
+    out_snapshot->state = state;
+    out_snapshot->has_snapshot = quota->has_snapshot;
+    out_snapshot->window_count = XIAOMIAO_QUOTA_WINDOWS;
+    out_snapshot->received_us = quota->has_snapshot ? quota->committed_us : 0;
+    out_snapshot->http_status = quota->http_status;
+    out_snapshot->last_error = quota->last_error;
+    for (uint8_t index = 0; index < XIAOMIAO_QUOTA_WINDOWS; ++index) {
+        const agent_quota_window_t *source = &quota->windows[index];
+        xiaomiao_quota_window_t *target = &out_snapshot->windows[index];
+        snprintf(target->label, sizeof(target->label), "%s",
+                 AGENT_QUOTA_LABELS[provider][index]);
+        target->present = source->present;
+        target->remaining_valid = source->remaining_valid;
+        target->remaining_percent = source->remaining_percent;
+        target->reset_time_valid = source->reset_time_valid;
+        memcpy(target->reset_at_local, source->reset_at_local,
+               sizeof(target->reset_at_local));
+        target->reset_countdown_valid = source->reset_countdown_valid;
+        target->reset_in_sec = source->reset_in_sec;
+    }
     agent_unlock();
     return ESP_OK;
 }

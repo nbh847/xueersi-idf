@@ -6,8 +6,8 @@
 
 ## 当前状态
 
-- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
-- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
+- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`（显示名 `Monitor`／「监控」）、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
+- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照；AI 额度 Goal 把该 App 扩为 4 页并让 Agent Service 提供两个服务商的额度快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，未实现 I2C `0x40` 从机协议；但项目负责人于 2026-09-27 报告 Hardware Test 可在实机控制 LED1／LED2，表明板上控制链路可用，实际 GD32 固件与仓库源码的对应关系待查。
 - Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，Tools 的 Wi-Fi 页显示真实连接状态。
@@ -36,6 +36,16 @@
 - 节点 11“PC Monitor 通信”于 2026-09-21 完成首版（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：统一 Python HTTP Agent、固件 Agent Service、API v1 校验、3 秒失效与 PC Monitor 指标显示。首版曾由 Kconfig 固定 Agent IPv4／端口；动态发现由当前补充 Goal 取代。`pc-agent/start.sh` 按执行系统选择 Python（macOS／Linux 用 `python3`，Windows Git Bash 用 `python`），并在 `.venv/<system>/` 中创建、复用对应环境。初版 PC Agent Python 单测 18/18 通过；首版固件构建与 CP5 人工验收已由项目负责人确认。
 
 - **进行中：PC Agent 局域网动态发现补充**（`goals/20260927-1549-agent-service-discovery.md`）。固件与 PC 端发现协议已实施并完成软件侧检查；2026-09-27 已通过首个局域网实机验收（设备动态发现 Agent、HTTP 200、CPU／内存正常显示），Agent 停止后指标失效、重启后自动恢复。更换 Wi-Fi 环境后的复验待完成。适用范围是每次设备与电脑位于可互通的同一局域网，暂不处理跨子网发现。
+
+- **监控 App 智谱与 Codex 额度已于 2026-09-27 完成并取得人工验收确认**（设计 `docs/monitor-ai-quota-design.md`；施工 `goals/20260927-1855-monitor-ai-quotas.md`）。PC Agent 新增两个只读额度端点（`/api/v1/quotas/codex`、`/api/v1/quotas/zhipu`，健康端点能力列表同步），固件 Agent Service 新增共享发现链路、额度快照与独立低频 Worker（180 秒过期，与 PC 指标的 1 秒轮询／3 秒失效互不影响），监控 App 扩为四页（第 3 页智谱 `5H`／`1W`、第 4 页 Codex `5H`／`7D`）并把 Launcher 显示名改为「监控」／`Monitor`，i18n 增至 213 个文案 ID。软件侧验证：102 项 Python 用例（含只读缓存、响应无凭据、失败后恢复、同一时间采样四条口径）、本机 HTTP 冒烟两个端点 `status=ok`、倒计时边界宿主编译核对、字库覆盖与静态检查。实机验收：第一轮照片确认第 4 页 Codex 显示正确，同时暴露三处缺陷——`RAM` 被截成 `RA`（28 px 名称框装不下 Montserrat 12 的 ≈27.8 px，折行第二行被裁）、额度页状态文字与右上 Wi-Fi 图标重合（状态框右边界到 156，图标占 140..158）、四页标题底部被裁（标题框 14 px 小于 16 px 档字体的 19 px 行高，折行后裁切）；已分别改为每项指标一个 78 px 单标签（`名称 数值 单位`）并 `CLIP`、状态右边界收到 136、标题框加高到 20 px。项目负责人于 2026-09-27 复测后确认「功能没问题，都验证过了」。证据类型：人工确认，第一轮附实机照片，最终确认与第二轮反馈未附串口日志。
+
+- **待审设计：空闲待机画面**（`docs/screen-idle-design.md`）。默认 2 分钟无按键进入黑底静态小电视画面，设置页可调时间，任意键唤醒并保留原页面；背光直连 VCC，无法物理熄灭或保证省电。文档待负责人审阅，固件尚未实施或验证。
+
+- **待审设计：Launcher 顺序与 Tools／Settings 信息归位**（`docs/launcher-tools-settings-reorganization-design.md`）。Games 拟移至第一页第三格；Tools 现有 Wi-Fi、System Info、About、Assets 全部改从 Settings 的 Wi-Fi／System 页面访问，Tools 最终只留番茄时钟入口。仅完成设计，当前固件仍按旧顺序和旧页面运行，尚未构建或实机验证。
+
+- **待审设计：Tools 番茄时钟**（`docs/pomodoro-timer-design.md`）。拟采用黑白圆环与中央倒计时，固定 25 分钟专注／5 分钟休息，离开 App 或进入待机画面后继续计时，完成后返回页面可见结果，本版不弹全局提醒。仅设计，固件未实施或验证，视觉效果待目标板验收。
+
+- **待选设计：方向键焦点切换动效**（`docs/directional-focus-transition-design.md`）。为 Launcher 与 Settings 的选项移动列出焦框滑移、光带扫入、轻微缩放、柔和光晕、方向拖尾五种候选；最终效果待负责人选择。固件尚未实施或验证。
 
 - **PC Monitor Y 轴上限标签修正已实机通过**。`100` 标签框从 18 px 加宽至 24 px，图表起点相应右移；负责人烧录后确认标签完整显示，量程和数据限幅保持 `0–100`。
 
@@ -92,7 +102,7 @@
 - **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用；项目负责人报告两颗 LED 已可由实机控制，但 GD32 工程缺少对应 I2C 实现，板载固件与仓库源码对应关系待查。电机未接入，实机行为未验证。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
-- PC Monitor 通过 Agent Service 获取指标；当前固件会在 Wi-Fi 取得 DHCP IPv4 后广播发现 PC Agent。电脑需运行 `pc-agent/`，并与设备处于可互通的同一局域网；发现需允许 TCP `8766` 与 UDP `8767` 入站。动态发现及 Agent 停止／恢复已通过目标板实机验证；换 Wi-Fi 后的重新发现待测。后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。
+- PC Monitor 通过 Agent Service 获取指标；当前固件会在 Wi-Fi 取得 DHCP IPv4 后广播发现 PC Agent。电脑需运行 `pc-agent/`，并与设备处于可互通的同一局域网；发现需允许 TCP `8766` 与 UDP `8767` 入站。动态发现及 Agent 停止／恢复已通过目标板实机验证；换 Wi-Fi 后的重新发现待测。AI 用量监控（智谱／Codex 额度）已复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由实现，并于 2026-09-27 完成实机验收（见 `goals/20260927-1855-monitor-ai-quotas.md`）。
 
 ## 历史记录
 

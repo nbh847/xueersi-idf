@@ -56,6 +56,21 @@ typedef enum {
     XM_TEXT_PM_LABEL_CPU_TEMP,
     XM_TEXT_PM_HINT,
 
+    /* Monitor AI quota pages (goal 2026-09-27). The provider titles and
+     * the terse state words stay identical in both tables: they are
+     * technical markers, like the abbreviations above. Only the pending
+     * marker and the shortened footer are localized. */
+    XM_TEXT_PM_TITLE_ZHIPU,
+    XM_TEXT_PM_TITLE_CODEX,
+    XM_TEXT_PM_QUOTA_HINT,
+    XM_TEXT_PM_QUOTA_PENDING,
+    XM_TEXT_QUOTA_STATE_OK,
+    XM_TEXT_QUOTA_STATE_LOGIN,
+    XM_TEXT_QUOTA_STATE_SRC,
+    XM_TEXT_QUOTA_STATE_BAD,
+    XM_TEXT_QUOTA_STATE_STALE,
+    XM_TEXT_QUOTA_STATE_OFF,
+
     /* Service state words used by the Wi-Fi, Tools and Settings pages. */
     XM_TEXT_STATE_CONNECTED,
     XM_TEXT_STATE_CONNECTING,

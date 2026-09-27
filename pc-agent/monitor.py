@@ -6,6 +6,12 @@ their own ``/api/v1/...`` routes instead of a second server. The HTTP
 layer only serializes the collector's cached snapshot and never runs a
 query itself (goal decision 5).
 
+The AI quota pages goal (2026-09-27) adds the read-only
+``/api/v1/quotas/codex`` and ``/api/v1/quotas/zhipu`` routes. Each
+provider owns an independent scheduler, cache and lock, so one provider
+failing, stalling or being unconfigured never touches the other or the
+PC metrics route.
+
 The HTTP API listens on ``0.0.0.0:8766`` by default and offers read-only
 GET routes. A UDP responder on port 8767 lets devices discover the
 current LAN address and HTTP port (goal decision 11 and service discovery
@@ -21,9 +27,12 @@ import struct
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Optional
+from typing import Dict, Optional
 
+from codex_quota import CodexWorker
 from pc_metrics import CollectorWorker, PcMetricsCollector
+from quota_cache import QuotaCache, QuotaWorker
+from zhipu_quota import ZhipuCollector
 
 AGENT_NAME = "xiaomiao-agent"
 AGENT_VERSION = "0.1.0"
@@ -40,7 +49,11 @@ CONTENT_TYPE_JSON = "application/json; charset=utf-8"
 
 # Capabilities may only list what this build really serves (goal contract
 # for /api/v1/health).
-CAPABILITIES = ("pc.metrics",)
+CAPABILITIES = ("pc.metrics", "quotas.codex", "quotas.zhipu")
+
+# Fixed provider IDs of the quota routes; the device matches windows by
+# provider ID and label and never by array order (goal decision 2).
+QUOTA_PROVIDERS = ("codex", "zhipu")
 
 
 def build_health_payload() -> dict:
@@ -78,8 +91,21 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self._send_json(build_health_payload())
         elif path == "/api/v1/pc/metrics":
             self._send_json(self.server.collector.snapshot())
+        elif path.startswith("/api/v1/quotas/"):
+            self._serve_quota(path[len("/api/v1/quotas/"):])
         else:
             self._send_json(build_error_payload("not_found", "unknown_path"), status=404)
+
+    def _serve_quota(self, provider: str) -> None:
+        if provider not in QUOTA_PROVIDERS:
+            self._send_json(build_error_payload("not_found", "unknown_path"), status=404)
+            return
+        cache = self.server.quotas.get(provider)
+        if cache is None:
+            # A build without that scheduler must not claim live data.
+            self._send_json(build_error_payload("unavailable", "no_snapshot"))
+            return
+        self._send_json(cache.snapshot())
 
     def _reject_method(self) -> None:
         self._send_json(build_error_payload("method_not_allowed", "get_only"), status=405)
@@ -136,9 +162,15 @@ class AgentHttpServer(ThreadingHTTPServer):
     request_queue_size = 64
 
 
-def build_server(collector: PcMetricsCollector, host: str, port: int) -> AgentHttpServer:
+def build_server(
+    collector: PcMetricsCollector,
+    host: str,
+    port: int,
+    quotas: Optional[Dict[str, QuotaCache]] = None,
+) -> AgentHttpServer:
     server = AgentHttpServer((host, port), AgentRequestHandler)
     server.collector = collector  # type: ignore[attr-defined]
+    server.quotas = quotas or {}  # type: ignore[attr-defined]
     server.daemon_threads = True
     return server
 
@@ -153,13 +185,29 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
 def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
     collector = PcMetricsCollector()
-    worker = CollectorWorker(collector)
-    worker.start()
+    metrics_worker = CollectorWorker(collector)
+    metrics_worker.start()
+
+    # One cache and one scheduler per provider: a broken or unconfigured
+    # source only degrades its own route (goal decision 6).
+    codex_cache = QuotaCache("codex")
+    zhipu_cache = QuotaCache("zhipu", collect_fn=ZhipuCollector().collect)
+    codex_worker = CodexWorker(codex_cache)
+    zhipu_worker = QuotaWorker(zhipu_cache)
+    codex_worker.start()
+    zhipu_worker.start()
+    workers = (metrics_worker, codex_worker, zhipu_worker)
+
+    def stop_workers() -> None:
+        for running_worker in workers:
+            running_worker.stop()
+
+    quotas = {"codex": codex_cache, "zhipu": zhipu_cache}
     try:
-        server = build_server(collector, args.host, args.port)
+        server = build_server(collector, args.host, args.port, quotas=quotas)
     except OSError as error:
         sys.stderr.write("xiaomiao-agent: cannot bind %s:%d (%s)\n" % (args.host, args.port, error))
-        worker.stop()
+        stop_workers()
         return 1
     try:
         discovery_server = AgentDiscoveryServer(server.server_port, args.host)
@@ -169,7 +217,7 @@ def main(argv: Optional[list] = None) -> int:
             % (DISCOVERY_HOST, DISCOVERY_PORT, error)
         )
         server.server_close()
-        worker.stop()
+        stop_workers()
         return 1
     discovery_thread = Thread(
         target=discovery_server.serve_forever,
@@ -196,7 +244,7 @@ def main(argv: Optional[list] = None) -> int:
         discovery_server.server_close()
         discovery_thread.join(timeout=2)
         server.server_close()
-        worker.stop()
+        stop_workers()
     return 0
 
 

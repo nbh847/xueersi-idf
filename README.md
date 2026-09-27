@@ -16,8 +16,8 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## 当前状态
 
-- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是占位 App；`PC Monitor` 通过固件 Agent Service 每秒拉取电脑端 `pc-agent/` 的真实 CPU／RAM／GPU／温度快照并刷新（3 秒无有效数据自动恢复 `--`；Agent 在 Wi-Fi 取得 DHCP IPv4 后通过局域网发现），GPU／温度缺失时按可选指标降级；`Tools` 提供真实 Wi-Fi 状态、System Info 和 About；`Settings` 提供 Wi-Fi 配网／自动连接／忘记网络，以及只读的 Display、Sound、System 页面，其中 `sound_enabled` 要等节点 12 才会产生业务效果。App Framework、Navigation、Launcher 与全局 Wi-Fi 图标位于 `main/framework/`，Settings Service、Wi-Fi Service、Agent Service、Storage Service、Assets Service 与 Font Service 位于 `main/services/`。
-- 全系统简体中文化（节点 15C）已通过实机目视回归：全部用户可见文案经 `main/framework/xiaomiao_i18n` 的 203 个文案 ID 渲染，完整 GB2312（7,445 字符）12／16 px A2 字库以私有 XMF1 格式存放于本机 1.5 MB `assets` SPIFFS 分区（随 `idf.py flash` 烧录，不依赖 SD），由 Font Service 校验后整包驻留 PSRAM；字库不可用时整体回退英文文案与 Montserrat，损坏注入场景未做实机验证。串口日志、配网网页与技术缩写有意保留英文。
+- ESP32 侧固件已经移植到 ESP-IDF 6.1，使用 LVGL 9.5 驱动 ST7735 SPI 屏幕；开机默认进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`Monitor`（显示名「监控」）、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页的 2 列 × 2 行网格，`Hardware Test` 进入第 2 页。`Hardware Test` 是位于 `main/main.c` 的 15 页硬件状态 Dashboard，按 A 进入、长按 B 800 ms 返回；`Games` 是占位 App；`Monitor` 通过固件 Agent Service 每秒拉取电脑端 `pc-agent/` 的真实 CPU／RAM／GPU／温度快照并刷新（3 秒无有效数据自动恢复 `--`；Agent 在 Wi-Fi 取得 DHCP IPv4 后通过局域网发现），GPU／温度缺失时按可选指标降级；`Monitor` 另有第 3 页智谱与第 4 页 Codex 两个额度页，显示各窗口的剩余百分比、进度条、重置时间与括号内剩余时长（额度快照 180 秒过期，与 PC 指标的 3 秒规则相互独立）；`Tools` 提供真实 Wi-Fi 状态、System Info 和 About；`Settings` 提供 Wi-Fi 配网／自动连接／忘记网络，以及只读的 Display、Sound、System 页面，其中 `sound_enabled` 要等节点 12 才会产生业务效果。App Framework、Navigation、Launcher 与全局 Wi-Fi 图标位于 `main/framework/`，Settings Service、Wi-Fi Service、Agent Service、Storage Service、Assets Service 与 Font Service 位于 `main/services/`。
+- 全系统简体中文化（节点 15C）已通过实机目视回归：全部用户可见文案经 `main/framework/xiaomiao_i18n` 的 213 个文案 ID 渲染，完整 GB2312（7,445 字符）12／16 px A2 字库以私有 XMF1 格式存放于本机 1.5 MB `assets` SPIFFS 分区（随 `idf.py flash` 烧录，不依赖 SD），由 Font Service 校验后整包驻留 PSRAM；字库不可用时整体回退英文文案与 Montserrat，损坏注入场景未做实机验证。串口日志、配网网页与技术缩写有意保留英文。
 - 屏幕使用 160 × 128、60 MHz SPI 与单块全屏 DMA 缓冲；此前双缓冲固件曾实机验证，但当前为给 Wi-Fi 配网释放内部 RAM 改成单缓冲。当前固件已在实机连续完成两次网页配网、热点 DHCP 和目标 Wi-Fi 凭据保存；单缓冲下的刷新性能待复验。
 - 由于屏幕的TE引脚没有连接到MCU，无法做垂直同步。抗撕裂。由于背光引脚直连cc，无法调节背光亮度。
 - 光照、热敏、蜂鸣器、按键、MicroSD、I2C 设备探测等功能已经接入 ESP32 侧固件。
@@ -29,7 +29,7 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 
 ## PC Agent（电脑端，节点 11）
 
-设备上的 PC Monitor 数据来自运行在电脑上的统一 `Xiaomiao Agent`（`pc-agent/`，Python 3，仅标准库 + `psutil`，GPU 优先 `nvidia-smi`）：
+设备上的 Monitor 数据来自运行在电脑上的统一 `Xiaomiao Agent`（`pc-agent/`，Python 3，仅标准库 + `psutil`，GPU 优先 `nvidia-smi`）：
 
 首次运行会在 `.venv/<system>/` 下创建对应系统的虚拟环境并安装依赖。启动脚本会按当前系统选择 Python：macOS／Linux 使用 `python3`，Windows 使用 `python`（通过 Git Bash 运行）：
 
@@ -37,11 +37,13 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 bash pc-agent/start.sh                                      # 默认 0.0.0.0:8766
 ```
 
-- API：`GET /api/v1/health`、`GET /api/v1/pc/metrics`；HTTP 只读取后台缓存快照，不在请求路径中现场采集。
+- API：`GET /api/v1/health`、`GET /api/v1/pc/metrics`、`GET /api/v1/quotas/codex`、`GET /api/v1/quotas/zhipu`；HTTP 只读取后台缓存快照，不在请求路径中现场采集。
+- 额度端点各返回一个服务商的两个窗口（Codex `5H`／`7D`，智谱 `5H`／`1W`），字段为 `label`、`remaining_percent`、`resets_at`、`reset_at_local`（`MM-DD HH:MM`）与 `reset_in_sec`；`status` 区分 `ok`／`auth_required`／`unavailable`／`invalid_data`／`stale`。两家各自 60 秒轮询、180 秒无成功更新标 `stale`，一方失败不影响另一方或 PC 指标。
+- Codex 额度经本机 `codex app-server` 只读查询（先 `account/read` 且 `refreshToken: false`，再读 `account/rateLimits/read`）；智谱额度按已确认顺序只读发现本机 Token（`~/.qclaw/agents/main/agent/models.json` → `~/.claude/settings.json` → 环境变量），只接受 `open.bigmodel.cn` 与 `dev.bigmodel.cn`，按 `TOKENS_LIMIT` 的 `unit=3`→`5H`、`unit=6`→`1W` 映射。凭据只在电脑本机使用，不进入固件、HTTP 响应或日志。
 - HTTP 默认监听 `0.0.0.0:8766`，UDP 服务发现监听 `0.0.0.0:8767`。设备取得 Wi-Fi DHCP IPv4 后向局域网广播发现请求，Agent 用单播回复；设备从回复来源读取电脑的当前 IPv4，并从响应读取 HTTP 端口。`0.0.0.0` 是电脑端的监听地址，不是设备请求地址。
 - 电脑与设备需处于可互通的同一局域网；电脑防火墙需允许 TCP `8766` 和 UDP `8767` 入站。暂不支持跨子网或互联网发现。该 Agent 无 TLS 与鉴权，仅面向可信局域网。
 - GPU 与温度依赖本机硬件：无 NVIDIA GPU 或温度源时对应字段为 `null`，设备显示 `--`，属正常降级。
-- 服务商 AI 额度等后续能力将复用同一 Agent 与 `/api/v1/...` 路由，尚未实现。
+- 设备侧额度页与额度端点已实现并完成实机验收（2026-09-27，含两轮排版修正：两项指标合并为单标签、状态文字避开右上 Wi-Fi 图标、标题框加高到 20 px）；逐项上游故障形态仍以软件用例覆盖为主。
 
 ## 开发文档导航
 
