@@ -33,7 +33,11 @@
   | 14 Storage Service | `goals/20260922-0938-storage-service.md` |
   | 15 Assets、文件系统与 Flash 完整中文字库（15A～15D） | 总纲 `goals/20260922-1701-assets-filesystem-chinese-font.md`；`goals/20260922-1711-assets-filesystem-foundation.md`、`goals/20260922-1711-flash-chinese-font-runtime.md`、`goals/20260922-1711-ui-chinese-localization.md`、`goals/20260922-1711-node15-integration-validation.md` |
 
-- 节点 11“PC Monitor 通信”已于 2026-09-21 完成（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：一个统一 Python HTTP Agent（`pc-agent/`，固定 IPv4、端口 `8766`，仅 `/api/v1/health` 与 `/api/v1/pc/metrics`）+ 固件通用 Agent Service（`main/services/xiaomiao_agent_service.{h,c}`，Kconfig 固定地址、Worker、响应上限、JSON 校验、3 秒失效）+ PC Monitor 接入（两页指标与滚动图、LVGL timer 每秒读快照刷新 CPU／RAM／GPU／温度，温度行按 GPU T／CPU T／TEMP 切换）。PC Agent 的 Python 单测 18/18 通过，固件静态复核通过；项目负责人确认固件构建、烧录与 CP5 手动场景全部通过，未提供新增日志。服务发现、AI 额度路由和其他 PC 数据端点不在本节点实现。
+- 节点 11“PC Monitor 通信”于 2026-09-21 完成首版（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：统一 Python HTTP Agent、固件 Agent Service、API v1 校验、3 秒失效与 PC Monitor 指标显示。首版曾由 Kconfig 固定 Agent IPv4／端口；动态发现由当前补充 Goal 取代。`pc-agent/start.sh` 按执行系统选择 Python（macOS／Linux 用 `python3`，Windows Git Bash 用 `python`），并在 `.venv/<system>/` 中创建、复用对应环境。初版 PC Agent Python 单测 18/18 通过；首版固件构建与 CP5 人工验收已由项目负责人确认。
+
+- **进行中：PC Agent 局域网动态发现补充**（`goals/20260927-1549-agent-service-discovery.md`）。固件与 PC 端发现协议已实施并完成软件侧检查；2026-09-27 已通过首个局域网实机验收（设备动态发现 Agent、HTTP 200、CPU／内存正常显示），Agent 停止后指标失效、重启后自动恢复。更换 Wi-Fi 环境后的复验待完成。适用范围是每次设备与电脑位于可互通的同一局域网，暂不处理跨子网发现。
+
+- **PC Monitor Y 轴上限标签修正已实机通过**。`100` 标签框从 18 px 加宽至 24 px，图表起点相应右移；负责人烧录后确认标签完整显示，量程和数据限幅保持 `0–100`。
 
 - 节点 14“Storage Service”已于 2026-09-22 完成（施工文档 `goals/20260922-0938-storage-service.md`）：MicroSD 生命周期迁到独立 `main/services/xiaomiao_storage_service.{h,c}`，`main/main.c` 启动链在 `lcd_init()` 后自动尝试首次挂载，Hardware Test MicroSD 页改用 Service 快照与挂载／卸载接口。CP5 九个实机场景全部通过（2026-09-22 15:38）：无卡冷启动与 10 次重试无 GPIO22 冲突、插卡挂载成功（屏幕 MOUNTED + SD 29818MB）、带卡冷启动直接进 MOUNTED、卸载与幂等重挂、15 页往返与五 App 烟测无回归。`cmd=5 R1 illegal command` 确认为 IDF v6.1 `sdmmc_init.c` 标准 SDIO 探测步骤、microSD 拒绝 CMD5 属预期正常；无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - MicroSD GPIO22 冲突修复已于 2026-09-21 21:56 通过人工复测并在节点 14 再次确认：连续 9 次 `sdmmc_card_init failed (0x107)` 均未再出现 `gpio: conflict found for GPIO[22]`，节点 14 的 10 次无卡重试同样无冲突。历史 Goal 与流水保留故障演进记录，不再把 GPIO22 冲突列为当前未解决问题。
@@ -88,7 +92,7 @@
 - **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用；项目负责人报告两颗 LED 已可由实机控制，但 GD32 工程缺少对应 I2C 实现，板载固件与仓库源码对应关系待查。电机未接入，实机行为未验证。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
-- PC Monitor 的指标已接入节点 11 的 Agent Service 快照：真实数据需在被忽略的本地 `sdkconfig` 配置 Agent IPv4、PC 端启动 `pc-agent/` 并与设备同处一个局域网；可提交配置地址为空，固件在该状态显示 `--` 且不受影响。节点 11 的 CP5 已由项目负责人确认通过；该确认未附新增串口日志、截图或资源数值。首版固定 Agent IPv4，不支持服务发现；后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。
+- PC Monitor 通过 Agent Service 获取指标；当前固件会在 Wi-Fi 取得 DHCP IPv4 后广播发现 PC Agent。电脑需运行 `pc-agent/`，并与设备处于可互通的同一局域网；发现需允许 TCP `8766` 与 UDP `8767` 入站。动态发现及 Agent 停止／恢复已通过目标板实机验证；换 Wi-Fi 后的重新发现待测。后续 AI 用量监控将复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由，尚未立项。
 
 ## 历史记录
 

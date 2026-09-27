@@ -2,7 +2,7 @@
  * Agent Service implementation (goal node 11).
  *
  * Responsibilities, in the order they appear below:
- *   1. address configuration - IPv4 text validation and the URL
+ *   1. LAN service discovery - UDP broadcast request and dynamic URL
  *   2. HTTP fetch            - bounded read of one Agent response
  *   3. JSON validation       - the frozen API v1 contract
  *   4. snapshot              - locked, self-consistent view for the UI
@@ -26,22 +26,26 @@
 
 #include "xiaomiao_agent_service.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "cJSON.h"
 #include "esp_err.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "sdkconfig.h"
 
 #include "xiaomiao_wifi_service.h"
 
@@ -49,6 +53,12 @@ static const char TAG[] = "agent_svc";
 
 /* `http://` + longest IPv4 + `:port` + the metrics path + terminator. */
 #define AGENT_URL_MAX 64
+/* Fixed LAN discovery endpoint shared with pc-agent/monitor.py. */
+#define AGENT_DISCOVERY_PORT 8767
+#define AGENT_DISCOVERY_TIMEOUT_US (1500 * 1000)
+#define AGENT_DISCOVERY_REQUEST "XIAOMIAO_AGENT_DISCOVER_V1"
+#define AGENT_DISCOVERY_RESPONSE_PREFIX "XMA1"
+#define AGENT_DISCOVERY_RESPONSE_SIZE 6
 /* Hard limit of one response body; anything longer is rejected whole. */
 #define AGENT_RESPONSE_MAX 2048
 /* The display validity window: past this, valid flags read false. */
@@ -100,8 +110,7 @@ static SemaphoreHandle_t s_lock;
 static bool s_initialized;
 static esp_err_t s_init_result = ESP_OK;
 
-/* Written once by init() before the Worker exists, read-only after. */
-
+/* Worker-owned; cleared whenever Wi-Fi or the HTTP endpoint fails. */
 static char s_metrics_url[AGENT_URL_MAX];
 
 /* Protected by s_lock. */
@@ -113,57 +122,120 @@ static int s_http_status;
 static esp_err_t s_last_error = ESP_OK;
 
 /* ------------------------------------------------------------------ */
-/* 1. Address configuration                                            */
+/* 1. LAN service discovery                                             */
 /* ------------------------------------------------------------------ */
 
-/*
- * The build configuration must carry bare IPv4 text: four decimal
- * groups 0..255 separated by dots, nothing else (goal node 11, "Fixed
- * address configuration"). Anything else keeps the Service in
- * UNCONFIGURED instead of failing the boot.
- */
-static bool agent_host_is_ipv4(const char *host)
-{
-    if (host == NULL || host[0] == '\0') {
-        return false;
-    }
-
-    size_t index = 0;
-    for (int group = 0; group < 4; ++group) {
-        if (group > 0) {
-            if (host[index] != '.') {
-                return false;
-            }
-            ++index;
-        }
-        int value = 0;
-        int digits = 0;
-        while (host[index] >= '0' && host[index] <= '9') {
-            value = value * 10 + (host[index] - '0');
-            ++digits;
-            ++index;
-            if (digits > 3) {
-                return false;
-            }
-        }
-        if (digits == 0 || value > 255) {
-            return false;
-        }
-        /* No leading zeros, matching the usual IPv4 text form. */
-        if (digits > 1 && host[index - digits] == '0') {
-            return false;
-        }
-    }
-    return host[index] == '\0';
-}
-
-static bool agent_build_url(void)
+static bool agent_build_url(const char *host, uint16_t port)
 {
     const int written = snprintf(s_metrics_url, sizeof(s_metrics_url),
-                                 "http://%s:%d/api/v1/pc/metrics",
-                                 CONFIG_XIAOMIAO_AGENT_HOST,
-                                 CONFIG_XIAOMIAO_AGENT_PORT);
+                                 "http://%s:%u/api/v1/pc/metrics",
+                                 host, (unsigned int)port);
     return written > 0 && written < (int)sizeof(s_metrics_url);
+}
+
+/*
+ * Discover one Agent on the current Wi-Fi LAN. The PC replies directly
+ * to this socket, so the datagram source address is the current PC IPv4;
+ * the six-byte payload advertises its HTTP port.
+ */
+static esp_err_t agent_discover(void)
+{
+    const int discovery_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (discovery_socket < 0) {
+        ESP_LOGW(TAG, "discovery socket failed: errno=%d", errno);
+        return ESP_FAIL;
+    }
+
+    esp_err_t result = ESP_FAIL;
+    const int broadcast_enabled = 1;
+    if (setsockopt(discovery_socket, SOL_SOCKET, SO_BROADCAST,
+                   &broadcast_enabled, sizeof(broadcast_enabled)) != 0) {
+        ESP_LOGW(TAG, "enable discovery broadcast failed: errno=%d", errno);
+        goto cleanup;
+    }
+
+    const struct sockaddr_in broadcast_address = {
+        .sin_family = AF_INET,
+        .sin_port = htons(AGENT_DISCOVERY_PORT),
+        .sin_addr.s_addr = htonl(INADDR_BROADCAST),
+    };
+    const char request[] = AGENT_DISCOVERY_REQUEST;
+    const ssize_t sent = sendto(discovery_socket, request, sizeof(request) - 1, 0,
+                                (const struct sockaddr *)&broadcast_address,
+                                sizeof(broadcast_address));
+    if (sent != (ssize_t)(sizeof(request) - 1)) {
+        ESP_LOGD(TAG, "send discovery request failed: errno=%d", errno);
+        goto cleanup;
+    }
+
+    const int64_t deadline_us = esp_timer_get_time() + AGENT_DISCOVERY_TIMEOUT_US;
+    for (;;) {
+        const int64_t remaining_us = deadline_us - esp_timer_get_time();
+        if (remaining_us <= 0) {
+            result = ESP_ERR_NOT_FOUND;
+            break;
+        }
+
+        const struct timeval timeout = {
+            .tv_sec = (long)(remaining_us / 1000000),
+            .tv_usec = (long)(remaining_us % 1000000),
+        };
+        if (setsockopt(discovery_socket, SOL_SOCKET, SO_RCVTIMEO,
+                       &timeout, sizeof(timeout)) != 0) {
+            ESP_LOGW(TAG, "set discovery timeout failed: errno=%d", errno);
+            break;
+        }
+
+        uint8_t response[AGENT_DISCOVERY_RESPONSE_SIZE + 1];
+        struct sockaddr_in source_address = {0};
+        socklen_t source_length = sizeof(source_address);
+        const ssize_t received = recvfrom(discovery_socket, response,
+                                          sizeof(response), 0,
+                                          (struct sockaddr *)&source_address,
+                                          &source_length);
+        if (received < 0) {
+            result = (errno == EAGAIN || errno == EWOULDBLOCK)
+                         ? ESP_ERR_NOT_FOUND
+                         : ESP_FAIL;
+            break;
+        }
+        if (received != AGENT_DISCOVERY_RESPONSE_SIZE ||
+            memcmp(response, AGENT_DISCOVERY_RESPONSE_PREFIX, 4) != 0 ||
+            source_address.sin_family != AF_INET ||
+            source_address.sin_addr.s_addr == htonl(INADDR_ANY)) {
+            ESP_LOGD(TAG, "ignoring invalid discovery response");
+            continue;
+        }
+
+        const uint16_t http_port = (uint16_t)(((uint16_t)response[4] << 8) |
+                                              (uint16_t)response[5]);
+        if (http_port == 0) {
+            ESP_LOGD(TAG, "ignoring discovery response with port 0");
+            continue;
+        }
+
+        const uint32_t host = ntohl(source_address.sin_addr.s_addr);
+        char host_text[16];
+        const int host_length = snprintf(host_text, sizeof(host_text),
+                                         "%u.%u.%u.%u",
+                                         (unsigned int)((host >> 24) & 0xff),
+                                         (unsigned int)((host >> 16) & 0xff),
+                                         (unsigned int)((host >> 8) & 0xff),
+                                         (unsigned int)(host & 0xff));
+        if (host_length <= 0 || host_length >= (int)sizeof(host_text) ||
+            !agent_build_url(host_text, http_port)) {
+            result = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        ESP_LOGI(TAG, "discovered agent at %s:%u", host_text,
+                 (unsigned int)http_port);
+        result = ESP_OK;
+        break;
+    }
+
+cleanup:
+    close(discovery_socket);
+    return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -420,15 +492,30 @@ static void agent_worker_task(void *argument)
 {
     (void)argument;
     static char body[AGENT_RESPONSE_MAX];
+    bool agent_discovered = false;
 
     for (;;) {
         if (!agent_wifi_is_online()) {
             /* No IPv4 means no route to the Agent; the 3-second rule in
              * get_snapshot() retires the display on its own, so nothing
              * else to clear here (goal node 11, failure paths). */
+            agent_discovered = false;
+            s_metrics_url[0] = '\0';
             agent_set_state(XIAOMIAO_AGENT_WIFI_OFFLINE);
             vTaskDelay(pdMS_TO_TICKS(AGENT_POLL_OFFLINE_MS));
             continue;
+        }
+
+        if (!agent_discovered) {
+            agent_set_state(XIAOMIAO_AGENT_DISCOVERING);
+            const esp_err_t discovery_result = agent_discover();
+            if (discovery_result != ESP_OK) {
+                agent_note_failure(0, discovery_result);
+                agent_set_state(XIAOMIAO_AGENT_RETRY_WAIT);
+                vTaskDelay(pdMS_TO_TICKS(AGENT_RETRY_WAIT_MS));
+                continue;
+            }
+            agent_discovered = true;
         }
 
         agent_set_state(XIAOMIAO_AGENT_CONNECTING);
@@ -454,6 +541,8 @@ static void agent_worker_task(void *argument)
             }
         } else {
             agent_note_failure(http_status, ESP_FAIL);
+            agent_discovered = false;
+            s_metrics_url[0] = '\0';
         }
 
         if (success) {
@@ -476,28 +565,6 @@ esp_err_t xiaomiao_agent_service_init(void)
     }
     s_initialized = true;
 
-    if (!agent_host_is_ipv4(CONFIG_XIAOMIAO_AGENT_HOST)) {
-        /* An empty address is the documented offline mode; a malformed
-         * one is logged once and treated the same way (goal node 11,
-         * "Fixed address configuration"). */
-        if (CONFIG_XIAOMIAO_AGENT_HOST[0] != '\0') {
-            ESP_LOGW(TAG, "agent host '%s' is not IPv4 text, staying unconfigured",
-                     CONFIG_XIAOMIAO_AGENT_HOST);
-        } else {
-            ESP_LOGI(TAG, "agent host not configured, staying unconfigured");
-        }
-        s_state = XIAOMIAO_AGENT_UNCONFIGURED;
-        s_init_result = ESP_OK;
-        return s_init_result;
-    }
-
-    if (!agent_build_url()) {
-        ESP_LOGW(TAG, "agent URL does not fit the buffer, staying unconfigured");
-        s_state = XIAOMIAO_AGENT_UNCONFIGURED;
-        s_init_result = ESP_OK;
-        return s_init_result;
-    }
-
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) {
         s_state = XIAOMIAO_AGENT_ERROR;
@@ -506,6 +573,7 @@ esp_err_t xiaomiao_agent_service_init(void)
         return s_init_result;
     }
 
+    s_state = XIAOMIAO_AGENT_WIFI_OFFLINE;
     if (xTaskCreate(agent_worker_task, "agent_svc", AGENT_TASK_STACK_BYTES,
                     NULL, AGENT_TASK_PRIORITY, NULL) != pdPASS) {
         vSemaphoreDelete(s_lock);
@@ -516,9 +584,7 @@ esp_err_t xiaomiao_agent_service_init(void)
         return s_init_result;
     }
 
-
-    s_state = XIAOMIAO_AGENT_WIFI_OFFLINE;
-    ESP_LOGI(TAG, "agent service ready, url=%s", s_metrics_url);
+    ESP_LOGI(TAG, "agent service ready, waiting for Wi-Fi discovery");
     s_init_result = ESP_OK;
     return s_init_result;
 }

@@ -8,19 +8,43 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV_DIR=".venv"
-if [ -x "$VENV_DIR/Scripts/python.exe" ]; then
-    PY="$VENV_DIR/Scripts/python.exe"
-elif [ -x "$VENV_DIR/bin/python" ]; then
-    PY="$VENV_DIR/bin/python"
-else
+SYSTEM_TYPE="$(uname -s)"
+case "$SYSTEM_TYPE" in
+    Darwin*)
+        HOST_PYTHON="python3"
+        VENV_DIR=".venv/macos"
+        VENV_PYTHON="$VENV_DIR/bin/python"
+        ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT*)
+        HOST_PYTHON="python"
+        VENV_DIR=".venv/windows"
+        VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
+        ;;
+    Linux*)
+        HOST_PYTHON="python3"
+        VENV_DIR=".venv/linux"
+        VENV_PYTHON="$VENV_DIR/bin/python"
+        ;;
+    *)
+        echo "start.sh: unsupported system: $SYSTEM_TYPE" >&2
+        exit 1
+        ;;
+esac
+
+if ! command -v "$HOST_PYTHON" >/dev/null 2>&1; then
+    echo "start.sh: $HOST_PYTHON was not found for $SYSTEM_TYPE" >&2
+    exit 1
+fi
+
+PY="$VENV_PYTHON"
+if [ ! -x "$PY" ]; then
     echo "start.sh: creating virtualenv at $VENV_DIR ..."
-    python -m venv "$VENV_DIR"
-    if [ -x "$VENV_DIR/Scripts/python.exe" ]; then
-        PY="$VENV_DIR/Scripts/python.exe"
-    else
-        PY="$VENV_DIR/bin/python"
-    fi
+    "$HOST_PYTHON" -m venv "$VENV_DIR"
+fi
+
+if [ ! -x "$PY" ]; then
+    echo "start.sh: virtualenv did not create $PY" >&2
+    exit 1
 fi
 
 if ! "$PY" -c "import psutil" 2>/dev/null; then

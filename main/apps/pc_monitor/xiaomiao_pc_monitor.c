@@ -3,7 +3,7 @@
  *
  * Two pages, each with live numeric values and a 60-second rolling chart:
  *   page 0 - CPU + RAM percent (shared 0..100 scale)
- *   page 1 - GPU percent + GPU temperature (shared 0..150 scale)
+ *   page 1 - GPU percent + GPU temperature (shared 0..100 scale)
  * RIGHT/LEFT switch pages, B returns to the Launcher. The App joins the
  * LVGL default group on open (like the Settings App) so it receives key
  * events directly; the Launcher root keeps no focus while an App is open.
@@ -177,6 +177,9 @@ static void pc_monitor_create_chart_page(lv_obj_t *parent, pc_monitor_page_t pag
     const int32_t row_h = 16;
     const int32_t name_x[2] = { 4, 82 };
     const int32_t value_x[2] = { 32, 110 };
+    const int32_t y_axis_label_width = 24;
+    const int32_t chart_x = y_axis_label_width + 2;
+    const int32_t chart_right_margin = 2;
 
     for (size_t i = 0; i < 2; ++i) {
         const char *name = (page == PC_MONITOR_PAGE_CPU_RAM)
@@ -203,19 +206,20 @@ static void pc_monitor_create_chart_page(lv_obj_t *parent, pc_monitor_page_t pag
     lv_obj_t *y_top_label = pc_monitor_create_label(page_obj, y_top,
                                                     xiaomiao_font_small(),
                                                     PC_MONITOR_COLOR_MUTED);
-    pc_monitor_place(y_top_label, 0, 42, 18, 12, LV_TEXT_ALIGN_LEFT);
+    pc_monitor_place(y_top_label, 0, 42, y_axis_label_width, 12, LV_TEXT_ALIGN_LEFT);
     lv_obj_t *y_bot_label = pc_monitor_create_label(page_obj, "0",
                                                     xiaomiao_font_small(),
                                                     PC_MONITOR_COLOR_MUTED);
-    pc_monitor_place(y_bot_label, 0, 88, 18, 12, LV_TEXT_ALIGN_LEFT);
+    pc_monitor_place(y_bot_label, 0, 88, y_axis_label_width, 12, LV_TEXT_ALIGN_LEFT);
 
     lv_obj_t *chart = lv_chart_create(page_obj);
     if (chart == NULL) {
         ESP_LOGE(TAG, "chart %u allocation failed", (unsigned)page);
         return;
     }
-    lv_obj_set_pos(chart, 20, 42);
-    lv_obj_set_size(chart, PC_MONITOR_SCREEN_W - 22, 60);
+    lv_obj_set_pos(chart, chart_x, 42);
+    lv_obj_set_size(chart,
+                    PC_MONITOR_SCREEN_W - chart_x - chart_right_margin, 60);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, PC_MONITOR_HISTORY);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);

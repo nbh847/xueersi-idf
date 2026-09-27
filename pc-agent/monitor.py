@@ -6,17 +6,22 @@ their own ``/api/v1/...`` routes instead of a second server. The HTTP
 layer only serializes the collector's cached snapshot and never runs a
 query itself (goal decision 5).
 
-The first version listens on ``0.0.0.0:8766``, offers read-only GET
-routes and is meant for a trusted LAN only (goal decision 11).
+The HTTP API listens on ``0.0.0.0:8766`` by default and offers read-only
+GET routes. A UDP responder on port 8767 lets devices discover the
+current LAN address and HTTP port (goal decision 11 and service discovery
+follow-up).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import socketserver
+import struct
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional, Tuple
+from threading import Thread
+from typing import Optional
 
 from pc_metrics import CollectorWorker, PcMetricsCollector
 
@@ -26,6 +31,10 @@ API_VERSION = 1
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8766
+DISCOVERY_HOST = "0.0.0.0"
+DISCOVERY_PORT = 8767
+DISCOVERY_REQUEST = b"XIAOMIAO_AGENT_DISCOVER_V1"
+DISCOVERY_RESPONSE_MAGIC = b"XMA1"
 
 CONTENT_TYPE_JSON = "application/json; charset=utf-8"
 
@@ -95,8 +104,40 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), format % args))
 
 
-def build_server(collector: PcMetricsCollector, host: str, port: int) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), AgentRequestHandler)
+def build_discovery_response(http_port: int) -> bytes:
+    if not 1 <= http_port <= 65535:
+        raise ValueError("HTTP port must be between 1 and 65535")
+    return DISCOVERY_RESPONSE_MAGIC + struct.pack("!H", http_port)
+
+
+class AgentDiscoveryRequestHandler(socketserver.BaseRequestHandler):
+    """Reply to the discovery protocol with the actual HTTP port."""
+
+    def handle(self) -> None:
+        request, response_socket = self.request
+        if request != DISCOVERY_REQUEST:
+            return
+        response_socket.sendto(
+            build_discovery_response(self.server.http_port), self.client_address
+        )
+
+
+class AgentDiscoveryServer(socketserver.UDPServer):
+    allow_reuse_address = True
+
+    def __init__(
+        self, http_port: int, host: str = DISCOVERY_HOST, port: int = DISCOVERY_PORT
+    ) -> None:
+        self.http_port = http_port
+        super().__init__((host, port), AgentDiscoveryRequestHandler)
+
+
+class AgentHttpServer(ThreadingHTTPServer):
+    request_queue_size = 64
+
+
+def build_server(collector: PcMetricsCollector, host: str, port: int) -> AgentHttpServer:
+    server = AgentHttpServer((host, port), AgentRequestHandler)
     server.collector = collector  # type: ignore[attr-defined]
     server.daemon_threads = True
     return server
@@ -120,9 +161,30 @@ def main(argv: Optional[list] = None) -> int:
         sys.stderr.write("xiaomiao-agent: cannot bind %s:%d (%s)\n" % (args.host, args.port, error))
         worker.stop()
         return 1
+    try:
+        discovery_server = AgentDiscoveryServer(server.server_port, args.host)
+    except OSError as error:
+        sys.stderr.write(
+            "xiaomiao-agent: cannot bind UDP discovery %s:%d (%s)\n"
+            % (DISCOVERY_HOST, DISCOVERY_PORT, error)
+        )
+        server.server_close()
+        worker.stop()
+        return 1
+    discovery_thread = Thread(
+        target=discovery_server.serve_forever,
+        name="xiaomiao-agent-discovery",
+        daemon=True,
+    )
+    discovery_thread.start()
     print(
         "xiaomiao-agent %s listening on %s:%d, capabilities: %s"
-        % (AGENT_VERSION, args.host, args.port, ",".join(CAPABILITIES)),
+        % (AGENT_VERSION, args.host, server.server_port, ",".join(CAPABILITIES)),
+        flush=True,
+    )
+    print(
+        "xiaomiao-agent discovery listening on %s:%d/udp"
+        % discovery_server.server_address,
         flush=True,
     )
     try:
@@ -130,6 +192,9 @@ def main(argv: Optional[list] = None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        discovery_server.shutdown()
+        discovery_server.server_close()
+        discovery_thread.join(timeout=2)
         server.server_close()
         worker.stop()
     return 0

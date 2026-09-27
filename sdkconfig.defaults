@@ -70,12 +70,6 @@ CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 # the interim `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE` are both replaced.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-# Agent Service (goal node 11). The Agent address stays empty in the
-# reproducible configuration on purpose: a real LAN IPv4 belongs to the
-# ignored local sdkconfig only (goal node 11, decision 3). An empty
-# address keeps the Service in UNCONFIGURED and the PC Monitor on `--`.
-CONFIG_XIAOMIAO_AGENT_HOST=""
-CONFIG_XIAOMIAO_AGENT_PORT=8766
 # Assets SPIFFS (goal node 15A/15B). The production font lives at
 # /assets/fonts/xiaomiao-zh-cn.xmf (32 chars incl. mount point), which is at
 # or beyond the default 32-byte SPIFFS name limit depending on how the VFS

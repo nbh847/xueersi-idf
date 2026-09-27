@@ -6,6 +6,10 @@
 
 ## 施工记录
 
+- 2026-09-27 18:02 -- 修正 PC Monitor Y 轴最大值文本 `100` 被窄标签框换行显示成 `10`：标签宽度增至 24 px，图表起点右移并保持原右边距，`0–100` 量程与数据限幅未变。等待目标板构建、烧录和目视复验。→ `main/apps/pc_monitor/xiaomiao_pc_monitor.c`
+
+- 2026-09-27 16:15 -- 完成 PC Agent 局域网动态发现补充：固件以 UDP limited broadcast 获取 PC 当前 IPv4 与实际 HTTP 端口，PC Agent 通过 UDP 8767 responder 回应；Wi-Fi 离线及 HTTP 连接失败会重发现，移除静态 Agent Kconfig。PC Agent 自动化测试共运行 20 项，19 项通过、1 项因无 `nvidia-smi` 跳过；并发 HTTP 测试揭示监听队列过小，改为 64 后通过。未运行固件构建、烧录或串口监视，实机验证待负责人执行。→ `goals/20260927-1549-agent-service-discovery.md`
+
 - 2026-09-25 22:25 -- 负责人确认节点 15 功能开发及配网回归可收尾并提交。15A～15D 的既有验收结论保持不变；独立配网 Goal 以连续两次热点 DHCP、网页扫描、目标 STA 获取 IPv4 与凭据保存的人工日志标记完成。清理已被否定的强制 RF 全校准实验配置，保留重启自动连接、互联网可达及单缓冲刷新表现的未验证边界。→ `goals/20260922-1701-assets-filesystem-chinese-font.md`、`goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`
 
 - 2026-09-25 22:13 -- 人工回传新固件连续两次配网日志：手机两次获热点 `192.168.4.2`，HTTPD、扫描、目标 Wi-Fi 连接、STA IPv4 与凭据保存均完成，第二次“寻找 IP”故障未复现。两次关闭后内部 free 为 70619／73535 字节，未见单调下降；旧 UDP PCB 遗留机制未被直接观测。重启自动连接、互联网可达与显示表现待验证。→ `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`
@@ -134,6 +138,9 @@
 
 ## 验证记录
 
+- 2026-09-27 18:08 -- PC Monitor Y 轴上限标签修正实机通过：负责人烧录后确认最大标签完整显示为 `100`；`0–100` 量程与数据限幅保持不变。→ `main/apps/pc_monitor/xiaomiao_pc_monitor.c`
+- 2026-09-27 17:56 -- 动态发现故障恢复实机验收通过：停止 PC Agent 后设备指标失效，重新启动 Agent 后 HTTP 指标请求恢复 200，CPU／内存数值重新显示。仅换 Wi-Fi 环境后的重新发现待测。→ `goals/20260927-1549-agent-service-discovery.md`
+- 2026-09-27 17:35 -- 动态发现首个局域网实机验收通过：ESP32 `192.168.0.105` 发现 PC Agent `192.168.0.104:8766`，PC Agent 连续返回指标 HTTP 200，CPU／内存数值显示正常；Mac GPU／温度字段为空符合已知可选指标降级。换 Wi-Fi 与 Agent 停止／恢复场景待测。→ `goals/20260927-1549-agent-service-discovery.md`
 - 2026-09-22 15:38 -- 节点 14 CP5 人工验收通过：ESP-IDF v6.1 构建与烧录成功；九个场景覆盖无卡启动、10 次失败重试、正常挂载、安全卸载、重新挂载、带卡冷启动、共享 SPI 与五 App 回归，结果全部通过。Agent 未重复运行固件构建、烧录或串口监视。→ `goals/20260922-0938-storage-service.md`
 - 2026-09-22 09:32 -- 同步 MicroSD 当前状态文档：`README.md`、项目概览和 v0.1 设计文档均明确 GPIO22 冲突已修复并通过连续 9 次失败重试实机验证；正常 SD 卡挂载与 `0x107` 根因区分仍待已知良好卡，不改变节点 14 未完成状态。→ `goals/20260921-2101-sd-gpio22-conflict-fix.md`
 

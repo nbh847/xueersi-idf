@@ -1,11 +1,10 @@
 /*
  * Agent Service (goal node 11).
  *
- * Third System Service. It owns the HTTP link to the unified Xiaomiao
- * Agent on the PC: the fixed address configuration, the Wi-Fi online
- * check, the periodic fetch, the response size limit, the JSON
- * validation and the thread-safe PC metrics snapshot (goal node 11,
- * "Agent Service design").
+ * Third System Service. It owns LAN discovery and the HTTP link to the
+ * unified Xiaomiao Agent on the PC: Wi-Fi readiness, UDP discovery,
+ * periodic fetch, response size limit, JSON validation and the
+ * thread-safe PC metrics snapshot (goal node 11 and discovery follow-up).
  *
  * Layering follows the existing Services: Apps and the Framework only
  * call this interface; they never include esp_http_client.h, esp_wifi.h,
@@ -13,10 +12,10 @@
  * - the Wi-Fi Service stays the single source of connectivity truth via
  * xiaomiao_wifi_get_snapshot().
  *
- * The Service is asynchronous: init() only validates the address and
- * starts one background Worker, then returns without waiting for Wi-Fi,
- * HTTP or the first sample, so the Launcher can never be delayed (goal
- * node 11, "Worker scheduling"). Callers read progress through
+ * The Service is asynchronous: init() starts one background Worker,
+ * then returns without waiting for Wi-Fi, discovery, HTTP or the first
+ * sample, so the Launcher can never be delayed (goal node 11,
+ * "Worker scheduling"). Callers read progress through
  * xiaomiao_agent_get_snapshot().
  *
  * Properties of the public snapshot:
@@ -42,15 +41,14 @@ extern "C" {
 #endif
 
 /*
- * Lifecycle of the Agent link. UNCONFIGURED means the build carries an
- * empty agent address: the Worker is not even started and no request is
- * ever sent (goal node 11, "Fixed address configuration"). ERROR means
- * init failed; the device keeps booting and the snapshot stays readable.
+ * Lifecycle of the Agent link. The Worker waits for Wi-Fi, discovers an
+ * Agent over the local network, then polls its HTTP API. ERROR means init
+ * failed; the device keeps booting and the snapshot stays readable.
  */
 typedef enum {
     XIAOMIAO_AGENT_UNINITIALIZED = 0,
-    XIAOMIAO_AGENT_UNCONFIGURED,
     XIAOMIAO_AGENT_WIFI_OFFLINE,
+    XIAOMIAO_AGENT_DISCOVERING,
     XIAOMIAO_AGENT_CONNECTING,
     XIAOMIAO_AGENT_ONLINE,
     XIAOMIAO_AGENT_DEGRADED,
@@ -87,13 +85,10 @@ typedef struct {
 } xiaomiao_agent_snapshot_t;
 
 /*
- * Validate the configured address and start the background Worker.
+ * Start the background discovery and polling Worker.
  *
  * Idempotent: only the first call starts anything, later calls return
- * the first result. With an empty (or malformed) CONFIG_XIAOMIAO_AGENT_HOST
- * the Service reports ESP_OK and stays in UNCONFIGURED - a missing
- * address is a normal offline mode, not an error (goal node 11, "Fixed
- * address configuration"). Never blocks on Wi-Fi, HTTP or the first
+ * the first result. Never blocks on Wi-Fi, discovery, HTTP or the first
  * sample, and never aborts startup: a failure leaves state ERROR and
  * the boot continues (goal node 11, "Worker scheduling").
  */

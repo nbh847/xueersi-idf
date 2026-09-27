@@ -12,7 +12,7 @@ ESP32 工程基于 ESP-IDF 6.1 和 LVGL 9.5。15 页 Dashboard 业务代码仍�
 app_main
   -> Settings Service 初始化（失败只记警告，继续启动）
   -> Wi-Fi Service 初始化（失败只记警告，继续离线启动；不等待扫描、关联或 DHCP）
-  -> Agent Service 初始化（地址为空则保持 UNCONFIGURED；失败只记警告，不等待 Wi-Fi、HTTP 或首次数据）
+  -> Agent Service 初始化（创建后台发现与轮询 Worker；失败只记警告，不等待 Wi-Fi、网络发现或首次数据）
   -> Assets Service 初始化（只读挂载 /assets 并读取 manifest；失败只记警告，不阻塞启动）
   -> 按键初始化
   -> lcd_init()：初始化共享 SPI2 总线与 TFT
@@ -41,7 +41,7 @@ Dashboard 页面依次覆盖光照、热敏、MPU6050、两路 LED、蜂鸣器�
 
 `Wi-Fi Service`（`main/services/xiaomiao_wifi_service.{h,c}`）是第二个 System Service，拥有全部网络生命周期：STA 启动与扫描、异步连接、1／2／5／10／30 秒退避重连、断开与忘记网络、SoftAP 配网会话，以及每 5 秒一次的 RSSI 采样（读取关联 AP，不用扫描）。它不依赖 LVGL、Navigation、Launcher 或具体 App；App 与 Framework 只通过公开接口读快照与下命令，`main/` 下除本 Service 的私有实现外没有 `esp_wifi_*`／`esp_netif_*`／HTTP server 调用。状态由 Wi-Fi／IP 事件驱动，事件回调只更新受互斥锁保护的状态、安排重连或提交轻量事件，从不调用 LVGL；`get_snapshot()` 复制一份自洽视图，未连接时清空旧 IP 与旧 RSSI，快照中不含密码、临时热点密码或表单内容。初始化只做栈与驱动启动并触发一次异步连接尝试，不等待扫描、关联或 DHCP，任何失败都只记录警告并让启动继续到 Launcher。
 
-`Agent Service`（`main/services/xiaomiao_agent_service.{h,c}`）是第三个 System Service，也是节点 11 的固件侧核心：它拥有到统一 PC Agent（仓库 `pc-agent/`，Python，默认端口 8766）的全部 HTTP 链路——固定地址配置（`CONFIG_XIAOMIAO_AGENT_HOST` 仅接受 IPv4 文本，可提交配置保持为空、UNCONFIGURED 状态不发请求）、后台 Worker（先读 Wi-Fi Service 公开快照判断在线，成功后 1 秒轮询、失败至少等 2 秒）、流式限长响应读取（2048 字节上限，超限整包拒绝）、API v1 JSON 校验（schema v1、`ok`/`degraded` 且核心字段有限数值才提交；`unavailable`/`stale` 不更新成功时间；可选 GPU／温度字段独立降级）与线程安全快照（每指标独立有效位，3 秒无新有效快照自动失效；锁内只提交与复制，网络 I/O、JSON 解析与日志均在锁外）。地址为空或 init 失败都不阻塞启动。
+`Agent Service`（`main/services/xiaomiao_agent_service.{h,c}`）是第三个 System Service，也是节点 11 的固件侧核心：它拥有到统一 PC Agent（仓库 `pc-agent/`，Python，默认 HTTP 端口 8766）的全部发现与 HTTP 链路——先读取 Wi-Fi Service 快照，取得 DHCP IPv4 后向 `255.255.255.255:8767` 广播发现请求；PC 端把自己的 HTTP 端口放在 UDP 回复中，设备以回复源 IPv4 和通告端口拼出请求地址；离线、发现无回应或 HTTP 连接失败时自动重试，不等待网络操作完成启动。Worker 成功后每秒拉取一次，失败至少等待 2 秒；响应流上限 2048 字节，超限整包拒绝；API v1 JSON 校验要求 schema v1、`ok`／`degraded` 且核心字段为有限数值，可选 GPU／温度字段独立降级；`unavailable`／`stale` 不更新成功时间。线程安全快照为每指标保留独立有效位，3 秒无新有效快照自动失效；锁内只提交与复制，网络 I/O、JSON 解析与日志均在锁外。服务发现适用于设备和电脑可互通的同一局域网，不包含跨子网或互联网发现。
 
 `Storage Service`（`main/services/xiaomiao_storage_service.{h,c}`）是第四个 System Service（节点 14，2026-09-22 已完成实机验收）：拥有全部 MicroSD 生命周期——SDSPI 设备创建、`/sdcard` 固定挂载点的 FATFS 挂载与卸载、错误状态与资源清理。板级接线（SPI host、CS GPIO、时钟上限）由 `app_main()` 在 `lcd_init()` 之后经 `xiaomiao_storage_config_t` 传入，Service 不硬编码第二套引脚；`mount()`／`unmount()` 同步串行（内部互斥锁保护）、幂等，不新增 Task／队列／timer，禁止自动格式化与卡写入。App 通过复制式 `xiaomiao_storage_snapshot_t` 读取状态、卡名（NUL 结尾）与 64 位容量，不接触 `sdmmc_card_t` 或 SDSPI／FATFS 头；Service 不调用 `spi_bus_initialize()`／`spi_bus_free()`，不拥有共享 SPI2 总线。GPIO22 修复时序（失败清理与成功卸载先 `gpio_reset_pin(cs_gpio)` 再移除 SDSPI 设备，挂载前清理遗留所有权）保留在 Service 内部。启动链在 `lcd_init()` 后自动尝试首次挂载，失败只记警告并继续进入 Launcher；Hardware Test MicroSD 页只调 Service 快照与挂载／卸载接口，A 重试挂载、B 安全卸载。
 
@@ -61,7 +61,7 @@ Dashboard 页面依次覆盖光照、热敏、MPU6050、两路 LED、蜂鸣器�
 
 ## 构建与配置
 
-ESP32 目标由根目录 `CMakeLists.txt` 定义，组件依赖见 `main/idf_component.yml` 和 `main/CMakeLists.txt`，分区布局由根目录 `partitions.csv` 定义（`nvs` 24 KB、`phy_init` 4 KB、`factory` app 2 MB、`assets` data/spiffs 1.5 MB，末尾约 384 KB 未分配；背景见 `goals/20260920-2210-wifi-service.md`）。`main/CMakeLists.txt` 用 `spiffs_create_partition_image(assets ../assets FLASH_IN_PROJECT)` 把 `assets/` 目录（含完整中文字体包，见 `tools/font-pack/`，普通构建只消费已提交产物、不运行生成工具）打成 SPIFFS 镜像并随 `idf.py flash` 写入 `0x220000`；生成 merged bin 时必须按实际 flash args 合并该镜像。`main/Kconfig.projbuild` 提供 Agent Service 的本地构建配置：`CONFIG_XIAOMIAO_AGENT_HOST`（默认空 = 未配置）与 `CONFIG_XIAOMIAO_AGENT_PORT`（默认 8766）；真实局域网 IPv4 只写入被忽略的本地 `sdkconfig`，可提交配置保持为空（见 `goals/20260921-1238-pc-monitor-communication.md`）。`main` 组件把自身目录加入 include 路径（`INCLUDE_DIRS "."`），因此该组件下任意源文件都可按 `framework/...` 或 `apps/...` 引用同组件头文件，新增业务 App 不需要各自维护相对路径。关键默认值位于 `sdkconfig.defaults`：240 MHz CPU、80 MHz QIO Flash、4 MB Flash、80 MHz Quad PSRAM、FreeRTOS 1000 Hz 和 LVGL RGB565。常用流程：
+ESP32 目标由根目录 `CMakeLists.txt` 定义，组件依赖见 `main/idf_component.yml` 和 `main/CMakeLists.txt`，分区布局由根目录 `partitions.csv` 定义（`nvs` 24 KB、`phy_init` 4 KB、`factory` app 2 MB、`assets` data/spiffs 1.5 MB，末尾约 384 KB 未分配；背景见 `goals/20260920-2210-wifi-service.md`）。`main/CMakeLists.txt` 用 `spiffs_create_partition_image(assets ../assets FLASH_IN_PROJECT)` 把 `assets/` 目录（含完整中文字体包，见 `tools/font-pack/`，普通构建只消费已提交产物、不运行生成工具）打成 SPIFFS 镜像并随 `idf.py flash` 写入 `0x220000`；生成 merged bin 时必须按实际 flash args 合并该镜像。`main` 组件把自身目录加入 include 路径（`INCLUDE_DIRS "."`），因此该组件下任意源文件都可按 `framework/...` 或 `apps/...` 引用同组件头文件，新增业务 App 不需要各自维护相对路径。关键默认值位于 `sdkconfig.defaults`：240 MHz CPU、80 MHz QIO Flash、4 MB Flash、80 MHz Quad PSRAM、FreeRTOS 1000 Hz 和 LVGL RGB565。常用流程：
 
 ```bash
 idf.py set-target esp32
@@ -77,7 +77,7 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 ## 目标架构与演进约束
 
-`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation、Launcher 与全局 Wi-Fi 图标；`main/apps/` 存放占位 `Games`、接入 Agent 快照的 `PC Monitor`、菜单 `Tools` 与菜单 `Settings`；`main/services/` 已实现 `Settings Service`（配置模型、NVS schema v1、安全回退与状态查询）、`Wi-Fi Service`（STA、扫描、自动连接、断线重连、网页配网与凭据持久化）、`Agent Service`（固定地址、HTTP 拉取、JSON 校验与 PC 指标快照，电脑端为 `pc-agent/`）与 `Storage Service`（MicroSD 挂载、卸载、状态快照和资源清理）。普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App，并默认启动包含五个入口的 Launcher。BSP 分层仍未实现；`wifi_auto_connect` 已由 Wi-Fi Service 消费并产生真实效果，`sound_enabled` 仍要等节点 12 才会生效。实施继续遵守小步迁移：保留 15 页硬件测试；SD 或网络缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI、I2C、NVS 或 `esp_wifi_*`，也不直接依赖 Launcher。
+`xiaomiao_firmware_v0.1_design.md` 规划将 Dashboard 封装为 Hardware Test App，并逐步引入 BSP、Service、App Framework 和 Launcher。当前 `main/framework/` 下已实现 App 描述、Registry、Manager、Navigation、Launcher 与全局 Wi-Fi 图标；`main/apps/` 存放占位 `Games`、接入 Agent 快照的 `PC Monitor`、菜单 `Tools` 与菜单 `Settings`；`main/services/` 已实现 `Settings Service`（配置模型、NVS schema v1、安全回退与状态查询）、`Wi-Fi Service`（STA、扫描、自动连接、断线重连、网页配网与凭据持久化）、`Agent Service`（UDP 广播发现、HTTP 拉取、JSON 校验与 PC 指标快照，电脑端为 `pc-agent/`）与 `Storage Service`（MicroSD 挂载、卸载、状态快照和资源清理）。普通固件已把 15 页 Dashboard 注册为 `Hardware Test` App，并默认启动包含五个入口的 Launcher。BSP 分层仍未实现；`wifi_auto_connect` 已由 Wi-Fi Service 消费并产生真实效果，`sound_enabled` 仍要等节点 12 才会生效。实施继续遵守小步迁移：保留 15 页硬件测试；SD 或网络缺失不得阻塞启动；业务 App 不直接操作 GPIO、SPI、I2C、NVS 或 `esp_wifi_*`，也不直接依赖 Launcher。
 
 ## 验证入口与已知缺口
 
@@ -87,4 +87,4 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 
 节点 10“Wi-Fi Service”已于 2026-09-21 完成并由项目负责人确认人工构建、烧录与手动测试全部通过。逐项证据覆盖启动不阻塞、扫描、SoftAP + DNS + HTTP 网页配网、取得 IPv4 后再提交凭据、错误凭据保护、换网与跨断电持久化、自动连接、退避重连、10 分钟超时、Forget network、Settings／Tools 页面、全局图标和既有 App 回归；新增确认未附日志的项目在 Goal 中明确标记为人工确认。凭据由 Service 以版本化 blob 保存到 `xiaomiao/wifi_creds`，Wi-Fi 驱动全程使用 `WIFI_STORAGE_RAM`。加入 Wi-Fi 后项目改用自定义 `partitions.csv`：NVS 与 `phy_init` 的大小和偏移保持不变，factory app 扩到 2 MB，并预留 1.5 MB `assets` 分区供节点 15 使用。实现、验证证据、已接受取舍与仅静态复核的故障路径见 `goals/20260920-2210-wifi-service.md`。
 
-节点 11“PC Monitor 通信”已于 2026-09-21 完成。统一 PC Agent、固件 Agent Service、固定 IPv4 HTTP API 与 PC Monitor 实时指标刷新已实现；PC Agent 的 Python 测试 18/18 通过，固件静态复核通过，项目负责人确认 ESP-IDF 构建、烧录及 CP5 手动场景全部通过。该确认未附新增串口日志、截图或资源数值；不可构造的底层分配／网络栈故障仍按源码检查记录为未验证。实现、验证口径与后续 AI 额度路由边界见 `goals/20260921-1238-pc-monitor-communication.md`。
+节点 11“PC Monitor 通信”已于 2026-09-21 完成首版。统一 PC Agent、固件 Agent Service、HTTP API 与 PC Monitor 实时指标刷新已实现；首版使用固定 IPv4，相关人工构建、烧录及 CP5 手动场景由项目负责人确认通过。局域网动态发现为后续补充，已完成首个局域网发现、指标显示和 Agent 停止／恢复的目标板验收；更换 Wi-Fi 环境后的重新发现待验证。原首版实现和验证记录见 `goals/20260921-1238-pc-monitor-communication.md`，动态发现记录见 `goals/20260927-1549-agent-service-discovery.md`。
