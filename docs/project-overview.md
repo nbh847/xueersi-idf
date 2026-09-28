@@ -29,6 +29,8 @@ app_main
 
 Dashboard 页面依次覆盖光照、热敏、MPU6050、两路 LED、蜂鸣器、两路电机、MicroSD、GPIO25/26 PWM、GPIO32/33 ADC、系统状态和 About。左右键切页，上下键调节当前值，A 执行动作，B 短按停止或取消、长按 800 ms 返回 Launcher。硬件状态集中在 `board_state_t`，UI 引用集中在 `ui_state_t`。
 
+方向键选项焦点切换附带「光带扫入」动效（`goals/20260928-1037-directional-focus-sweep.md`，2026-09-28 实施并实机收口）：Launcher 同页四向移动与跨页进入、Settings 顶层菜单与 Wi-Fi 可操作项、Tools 菜单的上下移动在静态焦点更新后，由一个临时光带子对象（140 ms `ease_out`，Launcher 12 px、Settings／Tools 8 px，浅白 `0xE8F0FF`）在新焦点卡片／行内从旧项所在一侧扫过一次，由父对象默认裁剪，结束后自删；边界无效键不播放，快速连按取消前段，A 中断、页面重建与 App 关闭前均先 `lv_anim_delete` 再删对象。分配失败只跳过装饰，静态焦点不受影响。
+
 `Games` 是占位 App：不获取 LVGL 输入焦点、不注册按键、不访问硬件，页面上只有 `Games`／`Coming soon`／`B Back` 三段文本，返回由 Launcher 现有的 App 打开态 B 转发分支完成。它同时也是首个独立业务目录的范例，后续业务 App 按同样结构新增。
 
 `PC Monitor` 是同结构的第二个业务 App（`main/apps/pc_monitor/`），节点 11 起显示真实 PC 指标：CPU／RAM 与 GPU／TEMP 分为两页，每页保留两项数值和 60 点滚动图，左右键切页，B 返回。App 保存每项指标的一行文本与图表／序列引用，打开时创建 20 ms LVGL timer（每秒读取一次）在 UI 线程读取 `xiaomiao_agent_get_snapshot()`、格式化文本并推进图表，关闭时按“删 timer → 移出 group → 清标签／图表引用 → 清容器引用”顺序释放；温度行按 GPU → CPU → 无的优先级显示并把来源名同步为 `GPU`／`CPU`／`TEMP`（中文统一为「温度」）。**每项指标只用一个 78 px 宽的 12 px 标签承载“名称 + 数值 + 单位”**（如 `CPU 86.9%`、`GPU 55.0°C`），并设 `LV_LABEL_LONG_MODE_CLIP`；这是 2026-09-27 实机照片暴露“`RAM` 被截成 `RA`、名称与数值粘连”后的修正——ASCII 走 Montserrat 12 比例字形，旧的 28 px 名称框装不下 `RAM`（≈27.8 px）与 `TEMP`／`GPU T`，换行第二行被 16 px 行高裁掉。3 秒无有效快照时有效位由 Service 清除，数值与图表均不再显示旧数据，页面恢复 `--%`／`--°C` 占位。数值格式化不依赖 printf `%f`。App 不访问硬件、不创建网络 Task 或 mutex，也不 include `esp_http_client.h`、`esp_wifi.h`、`cJSON.h` 或 NVS 头。

@@ -45,7 +45,7 @@
 
 - **待审设计：Tools 番茄时钟**（`docs/pomodoro-timer-design.md`）。拟采用黑白圆环与中央倒计时，固定 25 分钟专注／5 分钟休息，离开 App 或进入待机画面后继续计时，完成后返回页面可见结果，本版不弹全局提醒。仅设计，固件未实施或验证，视觉效果待目标板验收。
 
-- **待选设计：方向键焦点切换动效**（`docs/directional-focus-transition-design.md`）。为 Launcher 与 Settings 的选项移动列出焦框滑移、光带扫入、轻微缩放、柔和光晕、方向拖尾五种候选；最终效果待负责人选择。固件尚未实施或验证。
+- **已完成：方向键焦点切换光带扫入动效**（设计 `docs/directional-focus-transition-design.md`；施工 `goals/20260928-1037-directional-focus-sweep.md`）。2026-09-28 完成固件实现并当日收口：140 ms 浅白光带只在目标卡片／行内扫过（Launcher 12 px、Settings／Tools 8 px，初始值），静态焦点先更新，光带从旧项所在一侧扫入；快速连按取消前段，A 中断、页面销毁前均先删动画再删对象。首轮实机确认 Launcher 与 Settings 特效正常；同轮反馈 Tools 菜单无特效（原范围未覆盖），补接入 `xiaomiao_tools.c` 后由项目负责人烧录复验收口（「没问题了，我测过了」，附串口日志：三 App 开合 `screen children=2` 恒定、无新增错误）。未附动效视频，效果判定以负责人目视为准；参数未做调整。
 
 - **PC Monitor Y 轴上限标签修正已实机通过**。`100` 标签框从 18 px 加宽至 24 px，图表起点相应右移；负责人烧录后确认标签完整显示，量程和数据限幅保持 `0–100`。
 

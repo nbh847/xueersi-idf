@@ -6,6 +6,16 @@
 
 ## 施工记录
 
+- 2026-09-28 13:02 -- 光带扫入动效收尾：静态复核发现 Settings／Tools 快速连按时新动画覆盖对象引用、旧光带可能残留；已在启动新光带前停止旧动画，并为 Launcher／Settings／Tools 的动画创建失败补充对象释放。负责人确认修复版构建、烧录通过，Settings／Tools 快速连按光带正常；未附本轮日志或视频。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 12:50 -- 光带扫入动效 Goal 收口：Tools 补接入后项目负责人烧录复验确认「没问题了，我测过了」，附串口日志（Launcher 5 apps 启动、字体 READY、Agent 发现正常；PC Monitor／Settings／Tools 依次开合，`screen children=2` 恒定，无新增错误）。验收标准五项全部勾选；动效参数保持初始值未调整，未附动效视频。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 12:33 -- 光带扫入动效补接入 Tools 菜单：项目负责人实机反馈 Launcher／Settings 特效正常、Tools 菜单上下切换无特效（原 Goal 范围未覆盖 Tools）。`xiaomiao_tools.c` 按与 Settings 同构的语义接入（8 px、`LV_PCT(100)`、140 ms，`tools_show_view()` 与 `tools_close()` 前停止动画）；三处重复暂不提取共享模块，理由见 Goal。`git diff --check` 通过；Tools 部分待构建、烧录与实机复验。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 11:04 -- 方向键焦点「光带扫入」动效已实施（CP1＋CP2 代码与静态检查完成）：`xiaomiao_launcher.c` 与 `xiaomiao_settings.c` 各新增临时光带子对象（140 ms，ease_out，Launcher 12 px／Settings 8 px，浅白 0xE8F0FF），挂在目标卡片／行内由父对象裁剪；静态焦点先更新，方向语义为光带从旧项所在一侧扫入，快速连按取消前段、A 中断与页面销毁前均先 `lv_anim_delete` 再删对象。Agent 已核对 LVGL 9.5 动画与裁剪 API、`git diff --check` 通过；固件构建、烧录与实机视觉未验证。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 10:37 -- 项目负责人从五种方向键焦点效果中选定 B「光带扫入」；设计已更新，生成 Launcher 与 Settings 的施工 Goal。浏览器预览已制作，固件尚未实施或验证。→ `goals/20260928-1037-directional-focus-sweep.md`
+
 - 2026-09-27 20:30 -- 监控 App 智谱／Codex 额度 Goal 收口：项目负责人确认排版修正后已完成构建、烧录与四页实机复测；第一轮有第 1／4 页照片，最终确认未附构建或串口日志。Agent 复跑 PC Agent 102 项用例通过（1 项因无 `nvidia-smi` 跳过），`git diff --check` 通过；逐项上游故障注入未单独取得实机证据。→ `goals/20260927-1855-monitor-ai-quotas.md`
 
 - 2026-09-27 20:20 -- 第二轮实机反馈修正：四页标题框由 14 px 加高到 y=1／h=20 并设 `CLIP`（标题字体 16 px 档行高 19 px，旧框导致标题折行且底部被裁）；y 轴 `100`／`0` 与额度页重置行高度由 12／13 px 补到 14 px（12 px 档行高）；额度页状态文字右边界由 138 再收到 136，与 top layer Wi-Fi 图标（140..158）留出 4 px。未烧录，待再次目视。→ `goals/20260927-1855-monitor-ai-quotas.md`
@@ -147,6 +157,12 @@
 - 2026-09-20 11:02 — 补齐节点 4 的 B 键判定通道决策：经核对 LVGL 9.5 `indev_keypad_proc()`，对象级事件回调通道不可行，改为强制使用按下／释放边沿加独立状态机。→ 同上
 
 ## 验证记录
+
+- 2026-09-28 13:02 -- 光带收尾修复复验（项目负责人）：构建和烧录通过，Settings／Tools 连续快速按键时光带正常。Agent 复核 LVGL `lv_anim_start()` 失败返回、动画停止与对象释放顺序，`git diff --check` 通过；本轮证据为人工确认，未附日志或视频。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 12:50 -- 光带扫入动效收口复验通过（项目负责人）：Tools 补接入后烧录实机确认「没问题了，我测过了」，附串口日志证明启动、字体、Agent 发现与 PC Monitor／Settings／Tools 三 App 开合正常（`screen children=2` 恒定、无新增错误）；结合首轮「移动的特效都没问题」，Launcher／Settings／Tools 三处动效全部通过。证据类型：人工确认 + 串口日志，未附动效视频。→ `goals/20260928-1037-directional-focus-sweep.md`
+
+- 2026-09-28 12:33 -- 光带扫入动效首轮实机验收（项目负责人）：「移动的特效都没问题」，Launcher 与 Settings 的焦点动效通过目标板目视验收；证据类型为人工口头确认，未附视频或串口日志。同轮反馈 Tools 菜单无特效，属原范围外缺口，已补接入待复验。→ `goals/20260928-1037-directional-focus-sweep.md`
 
 - 2026-09-27 20:35 -- 监控 App 智谱／Codex 额度实机验收通过：项目负责人复测排版修正（指标行合并单标签、状态右边界收到 136、标题框加高到 20 px）后确认「这个功能没问题了，都验证过了」，本 Goal 收口。证据类型为人工确认：第一轮附第 1／4 页实机照片，第二轮与最终确认未附串口日志或逐项截图；逐项上游故障形态仍只有软件用例覆盖。→ `goals/20260927-1855-monitor-ai-quotas.md`
 

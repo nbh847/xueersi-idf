@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>方向键焦点动效对比 · Xiaomiao</title>
+  <style>
+    :root { color-scheme: dark; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; background: #10141b; color: #edf2fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button { font: inherit; }
+    .page { max-width: 1200px; margin: auto; padding: 40px 24px 64px; }
+    .eyebrow { margin: 0 0 10px; color: #8fa8d8; font-size: 12px; font-weight: 700; letter-spacing: .15em; }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); line-height: 1.2; letter-spacing: -.035em; }
+    .intro { max-width: 760px; margin: 16px 0 24px; color: #adb9ca; font-size: 15px; line-height: 1.7; }
+    .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; }
+    .control { min-width: 45px; min-height: 42px; padding: 8px 15px; border: 1px solid #46566f; border-radius: 9px; background: #1c2634; color: #edf2fb; cursor: pointer; }
+    .control:hover { background: #29394e; }
+    .control:focus-visible { outline: 2px solid #a8ccff; outline-offset: 2px; }
+    .control.primary { border-color: #4084ec; background: #2157aa; }
+    .control.primary:hover { background: #2d6cdf; }
+    .status { margin: 0 0 24px; color: #a9b8cc; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .panel { min-width: 0; padding: 22px; border: 1px solid #2b384a; border-radius: 16px; background: #171e28; }
+    .panel-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+    .letter { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; border: 1px solid #5175a5; border-radius: 7px; color: #bad7ff; font: 700 14px ui-monospace, SFMono-Regular, monospace; }
+    h2 { margin: 0; font-size: 18px; }
+    .description { min-height: 44px; margin: 0 0 14px; color: #aab7c9; font-size: 13px; line-height: 1.6; }
+    .screen { position: relative; width: 320px; height: 256px; margin: 0 auto; overflow: hidden; border: 3px solid #4c5969; border-radius: 10px; background: #0e1016; box-shadow: 0 14px 28px #0005; }
+    .screen-title { position: absolute; top: 5px; left: 10px; color: #dae2f0; font-size: 16px; font-weight: 700; }
+    .screen-grid { position: absolute; inset: 38px 8px 38px; display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); gap: 8px; }
+    .app { position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; overflow: hidden; border: 2px solid #39404f; border-radius: 8px; background: #1b1f2a; color: #c8d0e0; user-select: none; }
+    .app.active { border-color: #fff; background: #2d6cdf; color: #fff; }
+    .app.empty { visibility: hidden; }
+    .app-icon { font-size: 21px; line-height: 1; }
+    .app-name { font-size: 13px; font-weight: 600; }
+    .screen-foot { position: absolute; right: 10px; bottom: 7px; color: #9aa6bc; font-size: 13px; }
+    .screen-hint { position: absolute; left: 10px; bottom: 7px; color: #9aa6bc; font-size: 12px; }
+    .effect-layer { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+    .focus-frame { position: absolute; border: 3px solid #fff; border-radius: 8px; box-shadow: 0 0 9px #fff7; }
+    .sweep { position: absolute; inset: 0; width: 38%; background: linear-gradient(90deg, transparent, #ffffffaa, transparent); transform: skewX(-18deg); pointer-events: none; }
+    .trail { position: absolute; height: 4px; border-radius: 4px; background: linear-gradient(90deg, transparent, #a8d5ff, #fff); box-shadow: 0 0 10px #a8d5ff; transform-origin: left center; }
+    .note { margin-top: 22px; padding: 16px 18px; border-left: 3px solid #5588ca; background: #1a2635; color: #aebed1; font-size: 13px; line-height: 1.7; }
+    @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 390px) { .page { padding-inline: 12px; } .panel { padding: 14px 8px; } .screen { transform: scale(.88); transform-origin: top center; margin-bottom: -30px; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">XIAOMIAO · MOTION STUDY</p>
+    <h1>方向键焦点切换动效</h1>
+    <p class="intro">五块屏幕同步模拟同一次按键。蓝底白框是现有固件的静态焦点；过渡结束后，五种方案都回到这个状态。可点击方向按钮、按键盘方向键，或播放一轮路径。</p>
+    <div class="toolbar" aria-label="演示控制">
+      <button class="control" data-dir="up" aria-label="向上">↑</button>
+      <button class="control" data-dir="left" aria-label="向左">←</button>
+      <button class="control" data-dir="down" aria-label="向下">↓</button>
+      <button class="control" data-dir="right" aria-label="向右">→</button>
+      <button class="control primary" id="play">播放一轮</button>
+      <button class="control" id="reset">重置焦点</button>
+    </div>
+    <p class="status" id="status" role="status">当前焦点：Games · 第 1 页 · 索引 0</p>
+    <div class="grid" id="grid"></div>
+    <div class="note">这是浏览器视觉草图，尺寸按 160 × 128 屏幕的 2 倍绘制。流畅度、亮度、刷新负载及 LVGL 的最终效果，仍需在目标板上确认。跨页时先更新页面，再播放目标卡片的进入效果。</div>
+  </main>
+  <script>
+    const apps = [
+      { name: 'Games', icon: '◈' },
+      { name: 'Monitor', icon: '▥' },
+      { name: 'Tools', icon: '✧' },
+      { name: 'Settings', icon: '⚙' },
+      { name: 'Hardware Test', icon: '▤' }
+    ];
+    const effects = [
+      { id: 'A', name: '焦框滑移', description: '白色焦框沿方向移动。方向感最清楚，但跨页只能做目标卡片的进入。' },
+      { id: 'B', name: '光带扫入', description: '新卡片内一道窄光带扫过。变化集中在目标区域，不触发全屏闪光。' },
+      { id: 'C', name: '轻微缩放弹性', description: '新卡片轻微缩放并回稳。需要留意文字与图标在小屏上的抖动。' },
+      { id: 'D', name: '柔和光晕', description: '焦点边缘短暂变亮再收敛。最克制，但方向提示相对较弱。' },
+      { id: 'E', name: '方向拖尾', description: '旧位置到新位置出现短线拖尾。动感明显，额外绘制也最多。' }
+    ];
+    const grid = document.getElementById('grid');
+    const status = document.getElementById('status');
+    const views = [];
+    let focus = 0;
+    let autoplay = null;
+    let playStep = 0;
+
+    for (const effect of effects) {
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.innerHTML = `<div class="panel-head"><span class="letter">${effect.id}</span><h2>${effect.name}</h2></div><p class="description">${effect.description}</p><div class="screen" aria-label="${effect.name}示意屏幕"><div class="screen-title">Xiaomiao</div><div class="screen-grid"></div><div class="screen-hint">方向键移动焦点</div><div class="screen-foot"></div><div class="effect-layer"></div></div>`;
+      grid.append(panel);
+      views.push({ effect: effect.id, screen: panel.querySelector('.screen'), cards: panel.querySelector('.screen-grid'), foot: panel.querySelector('.screen-foot'), layer: panel.querySelector('.effect-layer'), animation: null });
+    }
+
+    function render(view) {
+      const page = Math.floor(focus / 4);
+      view.cards.replaceChildren();
+      for (let slot = 0; slot < 4; slot++) {
+        const index = page * 4 + slot;
+        const card = document.createElement('div');
+        card.className = 'app' + (index === focus ? ' active' : '') + (index >= apps.length ? ' empty' : '');
+        if (index < apps.length) {
+          card.innerHTML = `<span class="app-icon">${apps[index].icon}</span><span class="app-name">${apps[index].name}</span>`;
+        }
+        view.cards.append(card);
+      }
+      view.foot.textContent = `${page + 1}/2`;
+    }
+
+    function boundsInScreen(element, screen) {
+      const a = element.getBoundingClientRect();
+      const b = screen.getBoundingClientRect();
+      return { x: a.left - b.left - screen.clientLeft, y: a.top - b.top - screen.clientTop, w: a.width, h: a.height };
+    }
+
+    function clearEffect(view) {
+      if (view.animation) view.animation.cancel();
+      view.animation = null;
+      view.layer.replaceChildren();
+      for (const card of view.cards.children) {
+        card.getAnimations().forEach(animation => animation.cancel());
+        card.querySelectorAll('.sweep').forEach(sweep => sweep.remove());
+      }
+    }
+
+    function animate(view, oldIndex, pageChanged) {
+      const newCard = view.cards.children[focus % 4];
+      if (!newCard) return;
+      const target = boundsInScreen(newCard, view.screen);
+      const oldCard = pageChanged ? null : view.cards.children[oldIndex % 4];
+      const from = oldCard ? boundsInScreen(oldCard, view.screen) : target;
+      const options = { duration: 170, easing: 'ease-out' };
+      switch (view.effect) {
+        case 'A': {
+          const frame = document.createElement('div');
+          frame.className = 'focus-frame';
+          Object.assign(frame.style, { left: `${target.x}px`, top: `${target.y}px`, width: `${target.w}px`, height: `${target.h}px` });
+          view.layer.append(frame);
+          view.animation = frame.animate(pageChanged
+            ? [{ opacity: 0, transform: 'scale(.88)' }, { opacity: 1, transform: 'scale(1)' }]
+            : [{ transform: `translate(${from.x - target.x}px, ${from.y - target.y}px)` }, { transform: 'translate(0, 0)' }],
+            { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+          break;
+        }
+        case 'B': {
+          const sweep = document.createElement('div');
+          sweep.className = 'sweep';
+          newCard.append(sweep);
+          view.animation = sweep.animate([{ left: '-45%', opacity: 0 }, { left: '15%', opacity: 1, offset: .4 }, { left: '110%', opacity: 0 }], { duration: 150, easing: 'ease-out' });
+          view.animation.onfinish = () => sweep.remove();
+          break;
+        }
+        case 'C':
+          view.animation = newCard.animate([{ transform: 'scale(.95)' }, { transform: 'scale(1.025)', offset: .6 }, { transform: 'scale(1)' }], { duration: 180, easing: 'ease-out' });
+          break;
+        case 'D':
+          view.animation = newCard.animate([{ boxShadow: '0 0 0 #a8d5ff00' }, { boxShadow: '0 0 0 4px #a8d5ff77, 0 0 15px #a8d5ff99', offset: .48 }, { boxShadow: '0 0 0 #a8d5ff00' }], { duration: 160, easing: 'ease-out' });
+          break;
+        case 'E': {
+          if (pageChanged) {
+            view.animation = newCard.animate([{ opacity: .35, transform: 'translateX(-9px)' }, { opacity: 1, transform: 'translateX(0)' }], options);
+            break;
+          }
+          const dx = target.x + target.w / 2 - from.x - from.w / 2;
+          const dy = target.y + target.h / 2 - from.y - from.h / 2;
+          const trail = document.createElement('div');
+          trail.className = 'trail';
+          Object.assign(trail.style, { left: `${from.x + from.w / 2}px`, top: `${from.y + from.h / 2}px`, width: `${Math.hypot(dx, dy)}px`, transform: `rotate(${Math.atan2(dy, dx)}rad)` });
+          view.layer.append(trail);
+          view.animation = trail.animate([{ opacity: 0, scale: '0 1' }, { opacity: 1, scale: '.8 1', offset: .55 }, { opacity: 0, scale: '1 1' }], { duration: 200, easing: 'ease-out' });
+          break;
+        }
+      }
+    }
+
+    function update(next) {
+      if (next === focus) return;
+      const old = focus;
+      const changedPage = Math.floor(old / 4) !== Math.floor(next / 4);
+      for (const view of views) clearEffect(view);
+      focus = next;
+      for (const view of views) {
+        if (changedPage) render(view);
+        else {
+          view.cards.children[old % 4].classList.remove('active');
+          view.cards.children[next % 4].classList.add('active');
+        }
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) animate(view, old, changedPage);
+      }
+      status.textContent = `当前焦点：${apps[focus].name} · 第 ${Math.floor(focus / 4) + 1} 页 · 索引 ${focus}`;
+    }
+
+    function nextIndex(direction) {
+      const slot = focus % 4;
+      if (direction === 'left') return slot % 2 ? focus - 1 : focus >= 4 ? focus - 3 : focus;
+      if (direction === 'right') {
+        if (!(slot % 2)) return focus + 1 < apps.length ? focus + 1 : focus;
+        const nextPage = focus - slot + 4;
+        if (nextPage >= apps.length) return focus;
+        const sameRow = nextPage + Math.floor(slot / 2) * 2;
+        return sameRow < apps.length ? sameRow : nextPage;
+      }
+      if (direction === 'up') return slot >= 2 ? focus - 2 : focus;
+      if (direction === 'down') return slot < 2 && focus + 2 < apps.length ? focus + 2 : focus;
+      return focus;
+    }
+
+    function stopPlayback() {
+      if (autoplay !== null) clearInterval(autoplay);
+      autoplay = null;
+      document.getElementById('play').textContent = '播放一轮';
+    }
+
+    document.querySelectorAll('[data-dir]').forEach(button => button.addEventListener('click', () => {
+      stopPlayback();
+      update(nextIndex(button.dataset.dir));
+    }));
+    document.getElementById('reset').addEventListener('click', () => {
+      stopPlayback();
+      if (focus) update(0);
+    });
+    document.getElementById('play').addEventListener('click', () => {
+      if (autoplay !== null) { stopPlayback(); return; }
+      playStep = 0;
+      update(0);
+      document.getElementById('play').textContent = '停止播放';
+      const path = [1, 3, 2, 0, 1, 4, 0];
+      autoplay = setInterval(() => {
+        update(path[playStep++]);
+        if (playStep >= path.length) stopPlayback();
+      }, 550);
+    });
+    document.addEventListener('keydown', event => {
+      const direction = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.key];
+      if (!direction) return;
+      event.preventDefault();
+      stopPlayback();
+      update(nextIndex(direction));
+    });
+    views.forEach(render);
+  </script>
+</body>
+</html>

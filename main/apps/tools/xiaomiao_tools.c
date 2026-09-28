@@ -120,6 +120,16 @@ static const char TAG[] = "tools";
 #define TOOLS_B_RELEASE_POLL_MS 20
 
 /*
+ * Focus sweep band (directional focus transition, option B): a narrow
+ * bright strip sweeps once across the newly focused row. Same visual
+ * semantics as the Settings menu; duration and height are initial
+ * values, tuned on the target board.
+ */
+#define TOOLS_SWEEP_DURATION_MS   140
+#define TOOLS_SWEEP_BAND_LONG     8
+#define TOOLS_COLOR_SWEEP         0xE8F0FF
+
+/*
  * Wi-Fi page: four data rows (status, SSID, signal, IPv4) refreshed at
  * most once per second while the page is open (goal node 10,
  * checkpoint 4).
@@ -178,6 +188,7 @@ static tools_view_t s_view = TOOLS_VIEW_MENU;
 static size_t s_menu_index;
 static bool s_b_latched;
 static bool s_back_pending;
+static lv_obj_t *s_sweep_band;
 
 static void tools_show_view(tools_view_t view);
 
@@ -229,6 +240,87 @@ static void tools_create_footer(lv_obj_t *parent, const char *text)
     tools_place_label(parent, text, xiaomiao_font_small(), TOOLS_COLOR_MUTED, 0,
                       TOOLS_FOOTER_Y, TOOLS_SCREEN_W, TOOLS_FOOTER_H,
                       LV_TEXT_ALIGN_CENTER);
+}
+
+/*
+ * ------------------------------------------------------------------
+ * Focus sweep band (goal: directional focus sweep)
+ * ------------------------------------------------------------------
+ * Same semantics as the Settings menu band. The band is a temporary
+ * child of the focused row, so LVGL clips it to the row and no
+ * full-screen effect is created. The static blue focus is always
+ * applied before the band starts, so an allocation failure or an
+ * overloaded board only costs the animation, never the focus state.
+ */
+
+static void tools_band_stop(void)
+{
+    if (s_sweep_band == NULL) {
+        return;
+    }
+    /* Remove the animation first: no exec or completed callback may run
+     * against a deleted object afterwards. */
+    lv_anim_delete(s_sweep_band, NULL);
+    lv_obj_delete(s_sweep_band);
+    s_sweep_band = NULL;
+}
+
+/* Runs after the animation left the animation list (lv_anim.c), so
+ * deleting the band object here is safe. */
+static void tools_band_completed_cb(lv_anim_t *anim)
+{
+    if (s_sweep_band != NULL && anim->var == s_sweep_band) {
+        lv_obj_delete(s_sweep_band);
+        s_sweep_band = NULL;
+    }
+}
+
+static void tools_band_y_exec_cb(void *var, int32_t v)
+{
+    lv_obj_set_y((lv_obj_t *)var, v);
+}
+
+/* Sweep across `row` once. `from_top` is true when the old row was
+ * above the new one (down move): the band enters at the top edge and
+ * sweeps down; otherwise it enters at the bottom edge. */
+static void tools_band_start(lv_obj_t *row, bool from_top, int32_t row_h)
+{
+    tools_band_stop();
+    if (row == NULL) {
+        return;
+    }
+
+    lv_obj_t *band = lv_obj_create(row);
+    if (band == NULL) {
+        /* Static focus is already correct; skip the decoration only. */
+        return;
+    }
+    lv_obj_remove_style_all(band);
+    lv_obj_set_size(band, LV_PCT(100), TOOLS_SWEEP_BAND_LONG);
+    lv_obj_set_style_bg_color(band, lv_color_hex(TOOLS_COLOR_SWEEP), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(band, 1, 0);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_CLICKABLE);
+
+    const int32_t from = from_top ? -TOOLS_SWEEP_BAND_LONG : row_h;
+    const int32_t to = from_top ? row_h : -TOOLS_SWEEP_BAND_LONG;
+    lv_obj_set_pos(band, 0, from);
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, band);
+    lv_anim_set_exec_cb(&anim, tools_band_y_exec_cb);
+    lv_anim_set_values(&anim, from, to);
+    lv_anim_set_duration(&anim, TOOLS_SWEEP_DURATION_MS);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&anim, tools_band_completed_cb);
+    if (lv_anim_start(&anim) == NULL) {
+        lv_obj_delete(band);
+        return;
+    }
+
+    s_sweep_band = band;
 }
 
 static void tools_menu_highlight(void)
@@ -717,7 +809,10 @@ static void tools_show_view(tools_view_t view)
     }
 
     /* Only the Tools content is rebuilt; the input root and the
-     * Navigation content root stay untouched (goal decision 6). */
+     * Navigation content root stay untouched (goal decision 6). The
+     * sweep band is stopped first: it lives inside the rows that are
+     * about to be deleted, and its animation must not outlive them. */
+    tools_band_stop();
     lv_obj_clean(s_content);
     for (size_t i = 0; i < TOOLS_MENU_ITEM_COUNT; ++i) {
         s_menu_items[i] = NULL;
@@ -769,6 +864,8 @@ static void tools_menu_move(int step)
     }
 
     tools_menu_highlight();
+    /* Down move: the old row was above, so the band enters at the top. */
+    tools_band_start(s_menu_items[s_menu_index], step > 0, TOOLS_MENU_H);
 }
 
 static void tools_menu_activate(void)
@@ -970,7 +1067,10 @@ static void tools_close(void)
 {
     /* Own resources first, then hand the object tree back to Navigation,
      * which deletes the content root after this callback returns
-     * (goal decision 17). */
+     * (goal decision 17). The sweep band animation is removed first so
+     * no callback can fire on the tree that is about to be deleted. */
+    tools_band_stop();
+
     if (s_b_release_timer != NULL) {
         lv_timer_delete(s_b_release_timer);
         s_b_release_timer = NULL;

@@ -41,6 +41,15 @@ static const char TAG[] = "launcher";
 #define LAUNCHER_COLOR_FOCUS_BORDER  0xFFFFFF
 #define LAUNCHER_COLOR_CHROME        0x9AA6BC
 
+/*
+ * Focus sweep band (directional focus transition, option B): a narrow
+ * bright strip sweeps once across the newly focused card. Duration and
+ * width are initial values; they are tuned on the target board.
+ */
+#define LAUNCHER_SWEEP_DURATION_MS   140
+#define LAUNCHER_SWEEP_BAND_LONG     12
+#define LAUNCHER_COLOR_SWEEP         0xE8F0FF
+
 /* One grid entry: the card plus its icon, placeholder and name label. */
 typedef struct {
     lv_obj_t *card;
@@ -66,6 +75,7 @@ static lv_obj_t *s_page;
 static lv_obj_t *s_empty;
 static launcher_slot_t s_slots[XIAOMIAO_LAUNCHER_PER_PAGE];
 static size_t s_focus;
+static lv_obj_t *s_sweep_band;
 
 static bool launcher_app_open(void)
 {
@@ -87,6 +97,128 @@ static void launcher_slot_set_focused(launcher_slot_t *slot, bool focused)
                                 lv_color_hex(focused ? LAUNCHER_COLOR_FOCUS_BORDER
                                                      : LAUNCHER_COLOR_TEXT),
                                 0);
+}
+
+/*
+ * ------------------------------------------------------------------
+ * Focus sweep band (goal: directional focus sweep)
+ * ------------------------------------------------------------------
+ * The band is a temporary child of the target card, so LVGL clips it to
+ * the card and no full-screen effect is created. The static focus is
+ * always applied before the band starts, so an allocation failure or an
+ * overloaded board only costs the animation, never the focus state.
+ */
+
+static void launcher_band_stop(void)
+{
+    if (s_sweep_band == NULL) {
+        return;
+    }
+    /* Remove the animation first: no exec or completed callback may run
+     * against a deleted object afterwards. */
+    lv_anim_delete(s_sweep_band, NULL);
+    lv_obj_delete(s_sweep_band);
+    s_sweep_band = NULL;
+}
+
+/* Runs after the animation left the animation list (lv_anim.c), so
+ * deleting the band object here is safe. */
+static void launcher_band_completed_cb(lv_anim_t *anim)
+{
+    if (s_sweep_band != NULL && anim->var == s_sweep_band) {
+        lv_obj_delete(s_sweep_band);
+        s_sweep_band = NULL;
+    }
+}
+
+static void launcher_band_x_exec_cb(void *var, int32_t v)
+{
+    lv_obj_set_x((lv_obj_t *)var, v);
+}
+
+static void launcher_band_y_exec_cb(void *var, int32_t v)
+{
+    lv_obj_set_y((lv_obj_t *)var, v);
+}
+
+/* Sweep across `slot`'s card once, entering from the side the old focus
+ * was on (design rule 2). No-op for hidden cards (page tail slots). */
+static void launcher_band_start(launcher_slot_t *slot, launcher_move_t direction)
+{
+    if (slot == NULL || slot->card == NULL ||
+        lv_obj_has_flag(slot->card, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+
+    lv_obj_t *band = lv_obj_create(slot->card);
+    if (band == NULL) {
+        /* Static focus is already correct; skip the decoration only. */
+        return;
+    }
+    lv_obj_remove_style_all(band);
+    lv_obj_set_style_bg_color(band, lv_color_hex(LAUNCHER_COLOR_SWEEP), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(band, 1, 0);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_CLICKABLE);
+
+    bool horizontal;
+    int32_t from;
+    int32_t to;
+    switch (direction) {
+    case LAUNCHER_MOVE_LEFT:
+        /* Focus moved left: the old card was on the right, so the band
+         * enters at the right edge and sweeps left. */
+        horizontal = true;
+        from = LAUNCHER_CARD_W;
+        to = -LAUNCHER_SWEEP_BAND_LONG;
+        break;
+    case LAUNCHER_MOVE_RIGHT:
+        /* Focus moved right: enter at the left edge, sweep right. */
+        horizontal = true;
+        from = -LAUNCHER_SWEEP_BAND_LONG;
+        to = LAUNCHER_CARD_W;
+        break;
+    case LAUNCHER_MOVE_UP:
+        /* Focus moved up: the old card was below, so the band enters at
+         * the bottom edge and sweeps up. */
+        horizontal = false;
+        from = LAUNCHER_CARD_H;
+        to = -LAUNCHER_SWEEP_BAND_LONG;
+        break;
+    case LAUNCHER_MOVE_DOWN:
+    default:
+        /* Focus moved down: enter at the top edge, sweep down. */
+        horizontal = false;
+        from = -LAUNCHER_SWEEP_BAND_LONG;
+        to = LAUNCHER_CARD_H;
+        break;
+    }
+
+    if (horizontal) {
+        lv_obj_set_size(band, LAUNCHER_SWEEP_BAND_LONG, LAUNCHER_CARD_H);
+        lv_obj_set_pos(band, from, 0);
+    }
+    else {
+        lv_obj_set_size(band, LAUNCHER_CARD_W, LAUNCHER_SWEEP_BAND_LONG);
+        lv_obj_set_pos(band, 0, from);
+    }
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, band);
+    lv_anim_set_exec_cb(&anim, horizontal ? launcher_band_x_exec_cb
+                                          : launcher_band_y_exec_cb);
+    lv_anim_set_values(&anim, from, to);
+    lv_anim_set_duration(&anim, LAUNCHER_SWEEP_DURATION_MS);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&anim, launcher_band_completed_cb);
+    if (lv_anim_start(&anim) == NULL) {
+        lv_obj_delete(band);
+        return;
+    }
+
+    s_sweep_band = band;
 }
 
 static void launcher_slot_fill(launcher_slot_t *slot, const xiaomiao_app_t *app)
@@ -123,6 +255,10 @@ static void launcher_slot_fill(launcher_slot_t *slot, const xiaomiao_app_t *app)
 static void launcher_render_page(void)
 {
     const size_t count = xiaomiao_app_registry_count();
+
+    /* Defensive: a page rebuild invalidates every slot, so a running
+     * sweep must not survive it (design rule 4). */
+    launcher_band_stop();
 
     if (count == 0) {
         for (size_t i = 0; i < XIAOMIAO_LAUNCHER_PER_PAGE; ++i) {
@@ -246,16 +382,24 @@ static void launcher_move(launcher_move_t direction)
     const size_t old_page = old_index / XIAOMIAO_LAUNCHER_PER_PAGE;
     const size_t new_page = next / XIAOMIAO_LAUNCHER_PER_PAGE;
 
+    /* A new move replaces any sweep still running instead of queueing
+     * behind it (design rule 3). */
+    launcher_band_stop();
+
     s_focus = next;
 
     if (old_page != new_page) {
+        /* Cross-page: rebuild cards, page indicator and static focus
+         * first, then sweep into the target card (design rule 4). */
         launcher_render_page();
+        launcher_band_start(&s_slots[next % XIAOMIAO_LAUNCHER_PER_PAGE], direction);
         return;
     }
 
     /* Same page: repaint only the two affected entries. */
     launcher_slot_set_focused(&s_slots[old_index % XIAOMIAO_LAUNCHER_PER_PAGE], false);
     launcher_slot_set_focused(&s_slots[next % XIAOMIAO_LAUNCHER_PER_PAGE], true);
+    launcher_band_start(&s_slots[next % XIAOMIAO_LAUNCHER_PER_PAGE], direction);
 }
 
 /*
@@ -280,6 +424,10 @@ static void launcher_activate(void)
         ESP_LOGE(TAG, "entry %u has no valid id", (unsigned)s_focus);
         return;
     }
+
+    /* A must always act on the newest focus; no sweep may keep running
+     * behind the opened App (design rule 2). */
+    launcher_band_stop();
 
     const esp_err_t err = xiaomiao_navigation_open(app->id);
     if (err != ESP_OK) {
@@ -487,7 +635,10 @@ esp_err_t xiaomiao_launcher_destroy(void)
     }
 
     /* Removing from the group and deleting the root releases every
-     * child card, label and status object in one step. */
+     * child card, label and status object in one step. The sweep band
+     * and its animation are removed first so no callback can fire on a
+     * deleted tree. */
+    launcher_band_stop();
     lv_group_remove_obj(s_root);
     lv_obj_delete(s_root);
 
