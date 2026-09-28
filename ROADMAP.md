@@ -35,7 +35,7 @@
 
 - 节点 11“PC Monitor 通信”于 2026-09-21 完成首版（施工文档 `goals/20260921-1238-pc-monitor-communication.md`）：统一 Python HTTP Agent、固件 Agent Service、API v1 校验、3 秒失效与 PC Monitor 指标显示。首版曾由 Kconfig 固定 Agent IPv4／端口；动态发现由当前补充 Goal 取代。`pc-agent/start.sh` 按执行系统选择 Python（macOS／Linux 用 `python3`，Windows Git Bash 用 `python`），并在 `.venv/<system>/` 中创建、复用对应环境。初版 PC Agent Python 单测 18/18 通过；首版固件构建与 CP5 人工验收已由项目负责人确认。
 
-- **进行中：PC Agent 局域网动态发现补充**（`goals/20260927-1549-agent-service-discovery.md`）。固件与 PC 端发现协议已实施并完成软件侧检查；2026-09-27 已通过首个局域网实机验收（设备动态发现 Agent、HTTP 200、CPU／内存正常显示），Agent 停止后指标失效、重启后自动恢复。更换 Wi-Fi 环境后的复验待完成。适用范围是每次设备与电脑位于可互通的同一局域网，暂不处理跨子网发现。
+- **已完成：PC Agent 局域网动态发现补充**（`goals/20260927-1549-agent-service-discovery.md`）。固件与 PC 端发现协议已实施并完成软件侧检查；2026-09-27 已通过首个局域网实机验收（设备动态发现 Agent、HTTP 200、CPU／内存正常显示），Agent 停止后指标失效、重启后自动恢复。2026-09-28 项目负责人确认收口，更换 Wi-Fi 环境后的复验不再保留为未完成项。适用范围是每次设备与电脑位于可互通的同一局域网，暂不处理跨子网发现。
 
 - **监控 App 智谱与 Codex 额度已于 2026-09-27 完成并取得人工验收确认**（设计 `docs/monitor-ai-quota-design.md`；施工 `goals/20260927-1855-monitor-ai-quotas.md`）。PC Agent 新增两个只读额度端点（`/api/v1/quotas/codex`、`/api/v1/quotas/zhipu`，健康端点能力列表同步），固件 Agent Service 新增共享发现链路、额度快照与独立低频 Worker（180 秒过期，与 PC 指标的 1 秒轮询／3 秒失效互不影响），监控 App 扩为四页（第 3 页智谱 `5H`／`1W`、第 4 页 Codex `5H`／`7D`）并把 Launcher 显示名改为「监控」／`Monitor`，i18n 增至 213 个文案 ID。软件侧验证：102 项 Python 用例（含只读缓存、响应无凭据、失败后恢复、同一时间采样四条口径）、本机 HTTP 冒烟两个端点 `status=ok`、倒计时边界宿主编译核对、字库覆盖与静态检查。实机验收：第一轮照片确认第 4 页 Codex 显示正确，同时暴露三处缺陷——`RAM` 被截成 `RA`（28 px 名称框装不下 Montserrat 12 的 ≈27.8 px，折行第二行被裁）、额度页状态文字与右上 Wi-Fi 图标重合（状态框右边界到 156，图标占 140..158）、四页标题底部被裁（标题框 14 px 小于 16 px 档字体的 19 px 行高，折行后裁切）；已分别改为每项指标一个 78 px 单标签（`名称 数值 单位`）并 `CLIP`、状态右边界收到 136、标题框加高到 20 px。项目负责人于 2026-09-27 复测后确认「功能没问题，都验证过了」。证据类型：人工确认，第一轮附实机照片，最终确认与第二轮反馈未附串口日志。
 
@@ -102,7 +102,7 @@
 - **MicroSD／GPIO22 冲突已闭环（2026-09-22）**：手动拆分 SDSPI 初始化与 FATFS 挂载后，失败清理、成功卸载均在 `sdspi_host_remove_device()` 前复位 GPIO22；节点 14 的 10 次无卡重试全程无 `gpio: conflict found for GPIO[22]`。README 引脚表中 GPIO22 仍仅分配给 SD CS，固件内无第二个使用者。正常 SD 卡挂载已于 2026-09-22 验证通过（29818MB 卡成功挂载），无卡时的 `0x107`（`ESP_ERR_TIMEOUT`）确认为卡不响应的预期行为，与共享 SPI 总线问题已区分。
 - README 记录的 GD32 LED／电机协议已被 ESP32 代码使用；项目负责人报告两颗 LED 已可由实机控制，但 GD32 工程缺少对应 I2C 实现，板载固件与仓库源码对应关系待查。电机未接入，实机行为未验证。
 - 本机 ESP-IDF 安装为非默认布局（venv 不在 `<IDF_TOOLS_PATH>/python_env/` 下），需进程级设置 `IDF_TOOLS_PATH` 与 `IDF_PYTHON_ENV_PATH`；MSYS/Git Bash 会因 `MSYSTEM` 变量被 `export.ps1` 拒绝。环境细节与已验证事实见 `AGENTS.md`。
-- PC Monitor 通过 Agent Service 获取指标；当前固件会在 Wi-Fi 取得 DHCP IPv4 后广播发现 PC Agent。电脑需运行 `pc-agent/`，并与设备处于可互通的同一局域网；发现需允许 TCP `8766` 与 UDP `8767` 入站。动态发现及 Agent 停止／恢复已通过目标板实机验证；换 Wi-Fi 后的重新发现待测。AI 用量监控（智谱／Codex 额度）已复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由实现，并于 2026-09-27 完成实机验收（见 `goals/20260927-1855-monitor-ai-quotas.md`）。
+- PC Monitor 通过 Agent Service 获取指标；当前固件会在 Wi-Fi 取得 DHCP IPv4 后广播发现 PC Agent。电脑需运行 `pc-agent/`，并与设备处于可互通的同一局域网；发现需允许 TCP `8766` 与 UDP `8767` 入站。动态发现、Agent 停止／恢复已通过目标板实机验证，该 Goal 已于 2026-09-28 收口。AI 用量监控（智谱／Codex 额度）已复用同一 HTTP Agent 和 `/api/v1/quotas/...` 路由实现，并于 2026-09-27 完成实机验收（见 `goals/20260927-1855-monitor-ai-quotas.md`）。
 
 ## 历史记录
 
