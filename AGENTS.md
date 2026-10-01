@@ -10,7 +10,7 @@
 
 ## 项目结构与模块组织
 
-- `main/main.c` 是当前 ESP32-WROVER-B 固件的主业务源文件，包含 LVGL 9.5 硬件 Dashboard（注册为 `Hardware Test` App）及屏幕、按键、ADC、I2C、蜂鸣器驱动，并持有普通固件的启动链。`main/framework/` 是 App Framework 运行时及全局 Wi-Fi 状态图标，`main/apps/<app>/` 存放业务 App（当前有占位 `Games`、`PC Monitor`、过渡空状态 `Tools` 与菜单 `Settings`（含 Wi-Fi 连接详情及 System 四项子菜单））；`main/services/` 已实现 `Settings Service`（默认值、校验、NVS 读写与安全回退）、`Wi-Fi Service`（STA、扫描、重连、SoftAP + 网页配网与凭据持久化）、`Agent Service`（HTTP 轮询 PC Agent 快照）和 `Storage Service`（MicroSD 挂载／卸载生命周期），App 不直接访问 NVS、`esp_wifi_*`、`esp_http_client` 或 SDSPI／FATFS；`bsp/` 分层尚未建立。
+- `main/main.c` 是当前 ESP32-WROVER-B 固件的主业务源文件，包含 LVGL 9.5 硬件 Dashboard（注册为 `Hardware Test` App）及屏幕、按键、ADC、I2C 驱动，并持有普通固件的启动链。`main/framework/` 是 App Framework 运行时及全局 Wi-Fi 状态图标（含其可见性接口），`main/apps/<app>/` 存放业务 App（当前有占位 `Games`、`PC Monitor`、单入口 `Tools`（番茄时钟，2026-10-01 已验收）与菜单 `Settings`（含 Wi-Fi 连接详情及 System 四项子菜单））；`main/services/` 已实现 `Settings Service`（默认值、校验、NVS schema v3 读写--含 v1／v2 迁移--与安全回退）、`Wi-Fi Service`（STA、扫描、重连、SoftAP + 网页配网与凭据持久化）、`Agent Service`（HTTP 轮询 PC Agent 快照）、`Storage Service`（MicroSD 挂载／卸载生命周期）、`Assets Service`、`Font Service`、`Buzzer Service`（GPIO14／LEDC 蜂鸣器唯一所有者，Hardware Test 与番茄提醒共用）和 `Pomodoro Service`（番茄计时状态机），App 不直接访问 NVS、`esp_wifi_*`、`esp_http_client`、LEDC 或 SDSPI／FATFS；`bsp/` 分层尚未建立。
 - `main/idf_component.yml` 固定组件依赖，`sdkconfig.defaults` 与 `sdkconfig.ci` 保存可复现的 ESP-IDF 配置。
 - `GD32_firmware/` 是独立的 GD32F350 Keil 工程；当前仓库源码实现 USB CDC、UART 桥和 ESP32 自动下载控制，尚未实现 README 所述的 I2C `0x40` LED/电机从机协议。请勿把厂商库改动混入 ESP32 功能提交。
 - `docs/` 存放设计说明，`README.md` 记录已确认的引脚和协议，根目录 PDF 为硬件原理图。
@@ -54,6 +54,8 @@ GD32 固件使用 Keil 打开 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`。
 ## 编码风格与命名约定
 
 C 代码使用 4 空格缩进，花括号沿用 `main/main.c` 的现有风格。宏和引脚常量使用 `UPPER_SNAKE_CASE`，函数与局部变量使用 `snake_case`，文件内状态优先声明为 `static`。保持硬件初始化、错误处理和资源释放路径清晰；新增依赖前先确认 ESP-IDF 或现有组件没有等价能力。仓库未配置统一格式化器，避免对无关代码做批量格式化。
+
+**UI 交互约定（2026-10-01 负责人确认）**：所有可按键切换焦点的界面--Launcher、各 App 菜单、选项行、设置行，含后续新增界面--都必须接入方向键「光带扫入」特效（规范见 `docs/directional-focus-transition-design.md`）。横向切换用 12 px 宽竖带（如 Launcher 卡片与详情页选项行），纵向切换用 8 px 高横带（如 Settings 菜单与设置页行），140 ms `ease_out`，浅白 `0xE8F0FF`；静态焦点先行、快速连按取消前段、页面销毁前先删动画再删对象，分配失败只跳过特效不影响焦点。
 
 ## 测试与验证
 

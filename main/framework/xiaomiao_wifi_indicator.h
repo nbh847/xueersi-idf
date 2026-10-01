@@ -32,6 +32,15 @@ esp_err_t xiaomiao_wifi_indicator_create(void);
  * exist. */
 void xiaomiao_wifi_indicator_destroy(void);
 
+/*
+ * Temporarily hide the indicator without touching its state or timer
+ * (the Tools Pomodoro detail page keeps its black-and-white layout,
+ * goal 20261001-1036). Callers must restore visibility on every exit
+ * path; hiding twice and restoring once still leaves it visible. Safe
+ * to call at any time, including before create().
+ */
+void xiaomiao_wifi_indicator_set_visible(bool visible);
+
 #ifdef __cplusplus
 }
 #endif

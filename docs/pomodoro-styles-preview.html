@@ -1,0 +1,47 @@
+<div id="pomodoro-styles">
+  <div class="viz-carousel viz-dotted-background" aria-label="番茄时钟样式" data-previous-label="上一款" data-next-label="下一款">
+    <section data-variant="经典圆环"><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="经典圆环，专注倒计时"><rect width="160" height="128" fill="#000"/><text x="80" y="15" class="heading">专注</text><circle cx="80" cy="62" r="39" class="track"/><circle cx="80" cy="62" r="39" class="remaining" stroke-dasharray="180 246" transform="rotate(-90 80 62)"/><text x="80" y="70" class="time">18:24</text><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div></section>
+    <section data-variant="分段圆环" hidden><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="分段圆环，专注倒计时"><rect width="160" height="128" fill="#000"/><text x="80" y="15" class="heading">专注</text><g class="segments"></g><text x="80" y="70" class="time">18:24</text><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div></section>
+    <section data-variant="大字进度条" hidden><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="大字进度条，专注倒计时"><rect width="160" height="128" fill="#000"/><text x="80" y="20" class="heading">专注</text><text x="80" y="65" class="time">18:24</text><rect x="16" y="80" width="128" height="6" fill="#383838"/><rect x="16" y="80" width="94" height="6" fill="#f2f2f2"/><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div></section>
+    <section data-variant="半圆仪表" hidden><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="半圆仪表，专注倒计时"><rect width="160" height="128" fill="#000"/><text x="80" y="15" class="heading">专注</text><path d="M28 82 A52 52 0 0 1 132 82" class="track"/><path d="M28 82 A52 52 0 0 1 132 82" class="remaining" stroke-dasharray="120 164"/><text x="80" y="79" class="time">18:24</text><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div></section>
+    <section data-variant="方框轨道" hidden><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="方框轨道，专注倒计时"><rect width="160" height="128" fill="#000"/><text x="80" y="15" class="heading">专注</text><path d="M80 30 H140 V94 H20 V30 H80" class="track"/><path d="M80 30 H140 V94 H20 V30 H80" class="remaining" stroke-dasharray="271 368"/><text x="80" y="70" class="time">18:24</text><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div></section>
+  </div>
+  <div class="viz-row"><span class="text-small">160 × 128 · 2 倍放大预览</span><button type="button" class="btn" id="pomodoro-state" aria-pressed="false">查看暂停状态</button></div>
+</div>
+<style>
+  #pomodoro-styles .stage { min-height:280px; display:flex; align-items:center; justify-content:center; padding:12px 0; }
+  #pomodoro-styles svg { width:320px; max-width:100%; height:auto; background:#000; }
+  #pomodoro-styles svg text { fill:#f2f2f2; font-family:"Noto Sans SC","PingFang SC",sans-serif; font-size:12px; font-weight:400; }
+  #pomodoro-styles .heading { text-anchor:middle; }
+  #pomodoro-styles svg .time { font-family:Arial,sans-serif; font-size:24px; font-variant-numeric:tabular-nums; text-anchor:middle; }
+  #pomodoro-styles .right { text-anchor:end; }
+  #pomodoro-styles .track { fill:none; stroke:#383838; stroke-width:5; }
+  #pomodoro-styles .remaining { fill:none; stroke:#f2f2f2; stroke-width:5; }
+</style>
+<script>
+(() => {
+  const root = document.getElementById('pomodoro-styles');
+  const group = root.querySelector('.segments');
+  const ns = 'http://www.w3.org/2000/svg';
+  for (let i=0;i<25;i++) {
+    const angle = (i*14.4-90)*Math.PI/180;
+    const line = document.createElementNS(ns,'line');
+    line.setAttribute('x1',80+34*Math.cos(angle));
+    line.setAttribute('y1',62+34*Math.sin(angle));
+    line.setAttribute('x2',80+40*Math.cos(angle));
+    line.setAttribute('y2',62+40*Math.sin(angle));
+    line.setAttribute('stroke',i<18?'#f2f2f2':'#383838');
+    line.setAttribute('stroke-width','4');
+    group.appendChild(line);
+  }
+  const button = root.querySelector('#pomodoro-state');
+  let paused=false;
+  button.addEventListener('click',()=>{
+    paused=!paused;
+    root.querySelectorAll('.heading').forEach(el=>el.textContent=paused?'已暂停':'专注');
+    root.querySelectorAll('.action').forEach(el=>el.textContent=paused?'继续 / 重置':'A 暂停');
+    button.textContent=paused?'查看运行状态':'查看暂停状态';
+    button.setAttribute('aria-pressed',String(paused));
+  });
+})();
+</script>

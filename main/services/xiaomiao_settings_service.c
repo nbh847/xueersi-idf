@@ -33,16 +33,50 @@ static const char TAG[] = "settings_svc";
 /* Fixed identity of the stored entry (goal node 9, "fixed identity"). */
 #define SETTINGS_NVS_NAMESPACE "xiaomiao"
 #define SETTINGS_NVS_KEY       "settings"
-#define SETTINGS_BLOB_VERSION  1
-/* The payload behind the 4-byte header: the two boolean fields. */
-#define SETTINGS_BLOB_PAYLOAD  2
+/* v2 added pomodoro_sound_enabled, v3 adds the Pomodoro phase lengths
+ * (goal 20261001-1036). A stored v1 or v2 entry is migrated in place:
+ * every old value is preserved and the new fields get their defaults. */
+#define SETTINGS_BLOB_VERSION  3
+/* The payload behind the 4-byte header: three booleans and two minute
+ * counts. */
+#define SETTINGS_BLOB_PAYLOAD  5
+
+/* Accepted ranges of the v3 minute fields; anything outside them means
+ * the stored entry is damaged and the defaults are restored. */
+#define SETTINGS_FOCUS_MIN_MINUTES 1
+#define SETTINGS_FOCUS_MAX_MINUTES 180
+#define SETTINGS_BREAK_MIN_MINUTES 1
+#define SETTINGS_BREAK_MAX_MINUTES 60
+#define SETTINGS_DEFAULT_FOCUS_MINUTES 25
+#define SETTINGS_DEFAULT_BREAK_MINUTES 5
 
 /*
- * Private on-Flash layout. Fixed-width integers plus an explicit
- * reserved area keep the blob byte-identical across builds. `reserved`
- * is written as zero and carries no business meaning, so it is not
- * validated on read.
+ * Private on-Flash layouts. Fixed-width integers plus an explicit
+ * reserved area keep the blobs byte-identical across builds. Reserved
+ * bytes are written as zero and carry no business meaning, so they are
+ * not validated on read.
  */
+typedef struct {
+    uint16_t schema_version;
+    uint16_t payload_size;
+    uint8_t wifi_auto_connect;
+    uint8_t sound_enabled;
+    uint8_t pomodoro_sound_enabled;
+    uint8_t focus_minutes;
+    uint8_t break_minutes;
+    uint8_t reserved;
+} settings_blob_v3_t;
+
+/* The previous layouts, read only for the v1/v2 -> v3 migrations. */
+typedef struct {
+    uint16_t schema_version;
+    uint16_t payload_size;
+    uint8_t wifi_auto_connect;
+    uint8_t sound_enabled;
+    uint8_t pomodoro_sound_enabled;
+    uint8_t reserved;
+} settings_blob_v2_t;
+
 typedef struct {
     uint16_t schema_version;
     uint16_t payload_size;
@@ -53,6 +87,10 @@ typedef struct {
 
 /* The decoder reads fixed offsets, so a padding change must not slip
  * through unnoticed. */
+_Static_assert(sizeof(settings_blob_v3_t) == 10,
+               "settings blob v3 must stay 10 bytes");
+_Static_assert(sizeof(settings_blob_v2_t) == 8,
+               "settings blob v2 must stay 8 bytes");
 _Static_assert(sizeof(settings_blob_v1_t) == 8,
                "settings blob v1 must stay 8 bytes");
 
@@ -69,6 +107,9 @@ static void settings_defaults(xiaomiao_settings_t *settings)
 {
     settings->wifi_auto_connect = true;
     settings->sound_enabled = true;
+    settings->pomodoro_sound_enabled = true;
+    settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
+    settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
 }
 
 static const char *settings_source_name(xiaomiao_settings_source_t source)
@@ -87,32 +128,61 @@ static const char *settings_source_name(xiaomiao_settings_source_t source)
 }
 
 static void settings_blob_encode(const xiaomiao_settings_t *settings,
-                                 settings_blob_v1_t *blob)
+                                 settings_blob_v3_t *blob)
 {
-    /* Zero first, so the reserved bytes never carry stale stack data
+    /* Zero first, so the reserved byte never carries stale stack data
      * into Flash. */
     memset(blob, 0, sizeof(*blob));
     blob->schema_version = SETTINGS_BLOB_VERSION;
     blob->payload_size = SETTINGS_BLOB_PAYLOAD;
     blob->wifi_auto_connect = settings->wifi_auto_connect ? 1 : 0;
     blob->sound_enabled = settings->sound_enabled ? 1 : 0;
+    blob->pomodoro_sound_enabled = settings->pomodoro_sound_enabled ? 1 : 0;
+    blob->focus_minutes = settings->focus_minutes;
+    blob->break_minutes = settings->break_minutes;
 }
 
-static void settings_blob_decode(const settings_blob_v1_t *blob,
-                                 xiaomiao_settings_t *settings)
+static void settings_blob_decode_v3(const settings_blob_v3_t *blob,
+                                    xiaomiao_settings_t *settings)
 {
     settings->wifi_auto_connect = (blob->wifi_auto_connect != 0);
     settings->sound_enabled = (blob->sound_enabled != 0);
+    settings->pomodoro_sound_enabled = (blob->pomodoro_sound_enabled != 0);
+    settings->focus_minutes = blob->focus_minutes;
+    settings->break_minutes = blob->break_minutes;
+}
+
+/* The v2 layout has no phase lengths; the new fields start at their
+ * defaults. */
+static void settings_blob_decode_v2(const settings_blob_v2_t *blob,
+                                    xiaomiao_settings_t *settings)
+{
+    settings->wifi_auto_connect = (blob->wifi_auto_connect != 0);
+    settings->sound_enabled = (blob->sound_enabled != 0);
+    settings->pomodoro_sound_enabled = (blob->pomodoro_sound_enabled != 0);
+    settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
+    settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
+}
+
+/* The v1 layout has no pomodoro fields at all. */
+static void settings_blob_decode_v1(const settings_blob_v1_t *blob,
+                                    xiaomiao_settings_t *settings)
+{
+    settings->wifi_auto_connect = (blob->wifi_auto_connect != 0);
+    settings->sound_enabled = (blob->sound_enabled != 0);
+    settings->pomodoro_sound_enabled = true;
+    settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
+    settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
 }
 
 /*
  * A blob is usable only when its length, version, payload size and
- * field ranges all match v1. nvs_get_blob() reports a stored entry
- * longer than the buffer as ESP_ERR_NVS_INVALID_LENGTH but returns a
- * shorter one with the real length, so `length` is checked rather than
- * assumed.
+ * field ranges all match its declared version. nvs_get_blob() reports
+ * a stored entry longer than the buffer as ESP_ERR_NVS_INVALID_LENGTH
+ * but returns a shorter one with the real length, so `length` is
+ * checked rather than assumed.
  */
-static bool settings_blob_is_valid(const settings_blob_v1_t *blob, size_t length)
+static bool settings_blob_v3_is_valid(const settings_blob_v3_t *blob, size_t length)
 {
     if (length != sizeof(*blob)) {
         return false;
@@ -123,11 +193,45 @@ static bool settings_blob_is_valid(const settings_blob_v1_t *blob, size_t length
     if (blob->payload_size != SETTINGS_BLOB_PAYLOAD) {
         return false;
     }
-    if (blob->wifi_auto_connect > 1 || blob->sound_enabled > 1) {
+    if (blob->wifi_auto_connect > 1 || blob->sound_enabled > 1 ||
+        blob->pomodoro_sound_enabled > 1) {
+        return false;
+    }
+    if (blob->focus_minutes < SETTINGS_FOCUS_MIN_MINUTES ||
+        blob->focus_minutes > SETTINGS_FOCUS_MAX_MINUTES) {
+        return false;
+    }
+    if (blob->break_minutes < SETTINGS_BREAK_MIN_MINUTES ||
+        blob->break_minutes > SETTINGS_BREAK_MAX_MINUTES) {
         return false;
     }
 
     return true;
+}
+
+static bool settings_blob_v2_is_migratable(const settings_blob_v2_t *blob, size_t length)
+{
+    if (length != sizeof(*blob)) {
+        return false;
+    }
+    if (blob->schema_version != 2 || blob->payload_size != 3) {
+        return false;
+    }
+
+    return blob->wifi_auto_connect <= 1 && blob->sound_enabled <= 1 &&
+           blob->pomodoro_sound_enabled <= 1;
+}
+
+static bool settings_blob_v1_is_migratable(const settings_blob_v1_t *blob, size_t length)
+{
+    if (length != sizeof(*blob)) {
+        return false;
+    }
+    if (blob->schema_version != 1 || blob->payload_size != 2) {
+        return false;
+    }
+
+    return blob->wifi_auto_connect <= 1 && blob->sound_enabled <= 1;
 }
 
 /*
@@ -139,7 +243,7 @@ static bool settings_blob_is_valid(const settings_blob_v1_t *blob, size_t length
 static esp_err_t settings_store(nvs_handle_t handle,
                                 const xiaomiao_settings_t *settings)
 {
-    settings_blob_v1_t blob;
+    settings_blob_v3_t blob;
     settings_blob_encode(settings, &blob);
 
     esp_err_t err = nvs_set_blob(handle, SETTINGS_NVS_KEY, &blob, sizeof(blob));
@@ -176,13 +280,20 @@ static esp_err_t settings_install_defaults(nvs_handle_t handle,
 }
 
 /*
- * Load the snapshot from NVS, repairing a missing or damaged entry.
- * Every failure path leaves a complete, readable in-memory
- * configuration behind; none of them aborts the boot.
+ * Load the snapshot from NVS, migrating a stored v1 entry and repairing
+ * a missing or damaged one. Every failure path leaves a complete,
+ * readable in-memory configuration behind; none of them aborts the
+ * boot.
  */
 static esp_err_t settings_load(nvs_handle_t handle)
 {
-    settings_blob_v1_t blob;
+    /* All three layouts fit in the v3 buffer, so one read buffer serves
+     * every migration; the union keeps the aliasing explicit. */
+    union {
+        settings_blob_v3_t v3;
+        settings_blob_v2_t v2;
+        settings_blob_v1_t v1;
+    } blob;
     memset(&blob, 0, sizeof(blob));
     size_t length = sizeof(blob);
 
@@ -203,19 +314,60 @@ static esp_err_t settings_load(nvs_handle_t handle)
         return err;
     }
 
-    if (!settings_blob_is_valid(&blob, length)) {
-        /* Length, version or field range is wrong. The entry belongs to
-         * this Service, so only this key is rewritten. */
-        ESP_LOGW(TAG, "stored settings invalid (length=%u), restoring defaults",
-                 (unsigned)length);
-        return settings_install_defaults(handle,
-                                        XIAOMIAO_SETTINGS_SOURCE_RECOVERED);
+    if (settings_blob_v3_is_valid(&blob.v3, length)) {
+        settings_blob_decode_v3(&blob.v3, &s_settings);
+        s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
+        s_last_error = ESP_OK;
+        return ESP_OK;
     }
 
-    settings_blob_decode(&blob, &s_settings);
-    s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
-    s_last_error = ESP_OK;
-    return ESP_OK;
+    if (settings_blob_v2_is_migratable(&blob.v2, length)) {
+        /* Schema upgrade from v2: keep every stored value, give the
+         * new phase lengths their defaults and persist the result as
+         * v3 so the migration runs only once. */
+        settings_blob_decode_v2(&blob.v2, &s_settings);
+        ESP_LOGI(TAG, "migrating stored settings v2 -> v3 (focus_minutes=%u, break_minutes=%u)",
+                 (unsigned)s_settings.focus_minutes,
+                 (unsigned)s_settings.break_minutes);
+        err = settings_store(handle, &s_settings);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "storing migrated settings failed: %s (0x%x), continuing in memory",
+                     esp_err_to_name(err), (unsigned)err);
+            s_source = XIAOMIAO_SETTINGS_SOURCE_DEGRADED;
+            s_last_error = err;
+            return err;
+        }
+        s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
+        s_last_error = ESP_OK;
+        return ESP_OK;
+    }
+
+    if (settings_blob_v1_is_migratable(&blob.v1, length)) {
+        /* Schema upgrade from v1: keep both original values, give the
+         * new preferences their defaults and persist the result as v3
+         * so the migration runs only once. */
+        settings_blob_decode_v1(&blob.v1, &s_settings);
+        ESP_LOGI(TAG, "migrating stored settings v1 -> v3 (pomodoro_sound_enabled=%d)",
+                 (int)s_settings.pomodoro_sound_enabled);
+        err = settings_store(handle, &s_settings);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "storing migrated settings failed: %s (0x%x), continuing in memory",
+                     esp_err_to_name(err), (unsigned)err);
+            s_source = XIAOMIAO_SETTINGS_SOURCE_DEGRADED;
+            s_last_error = err;
+            return err;
+        }
+        s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
+        s_last_error = ESP_OK;
+        return ESP_OK;
+    }
+
+    /* Length, version or field range is wrong. The entry belongs to
+     * this Service, so only this key is rewritten. */
+    ESP_LOGW(TAG, "stored settings invalid (length=%u), restoring defaults",
+             (unsigned)length);
+    return settings_install_defaults(handle,
+                                     XIAOMIAO_SETTINGS_SOURCE_RECOVERED);
 }
 
 esp_err_t xiaomiao_settings_service_init(void)
@@ -265,9 +417,12 @@ esp_err_t xiaomiao_settings_service_init(void)
                  settings_source_name(s_source));
     }
     else {
-        ESP_LOGI(TAG, "settings service ready, source=%s (wifi_auto_connect=%d, sound_enabled=%d)",
+        ESP_LOGI(TAG, "settings service ready, source=%s (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u)",
                  settings_source_name(s_source), (int)s_settings.wifi_auto_connect,
-                 (int)s_settings.sound_enabled);
+                 (int)s_settings.sound_enabled,
+                 (int)s_settings.pomodoro_sound_enabled,
+                 (unsigned)s_settings.focus_minutes,
+                 (unsigned)s_settings.break_minutes);
     }
 
     s_init_result = err;
@@ -332,8 +487,10 @@ esp_err_t xiaomiao_settings_set(const xiaomiao_settings_t *settings)
     s_settings = *settings;
     s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
     s_last_error = ESP_OK;
-    ESP_LOGI(TAG, "settings stored (wifi_auto_connect=%d, sound_enabled=%d)",
-             (int)s_settings.wifi_auto_connect, (int)s_settings.sound_enabled);
+    ESP_LOGI(TAG, "settings stored (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u)",
+             (int)s_settings.wifi_auto_connect, (int)s_settings.sound_enabled,
+             (int)s_settings.pomodoro_sound_enabled,
+             (unsigned)s_settings.focus_minutes, (unsigned)s_settings.break_minutes);
     return ESP_OK;
 }
 

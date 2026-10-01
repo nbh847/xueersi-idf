@@ -7,10 +7,10 @@
 ## 当前状态
 
 - 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `PC Monitor`（显示名 `Monitor`／「监控」）、`Tools`、`Games`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格（监控、工具、游戏、设置），`Hardware Test` 在第 2 页，启动焦点在监控。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”；注册顺序由 2026-10-01 收口的信息归位 Goal 调整。
-- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照；AI 额度 Goal 把该 App 扩为 4 页并让 Agent Service 提供两个服务商的额度快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
+- 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标，番茄时钟 Goal 新增其可见性接口），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照；AI 额度 Goal 把该 App 扩为 4 页并让 Agent Service 提供两个服务商的额度快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端，番茄时钟 Goal 的 `Pomodoro Service` 与 `Buzzer Service`——后者是 GPIO14／LEDC 蜂鸣器通道的唯一所有者；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client`、cJSON 或 LEDC），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，未实现 I2C `0x40` 从机协议；但项目负责人于 2026-09-27 报告 Hardware Test 可在实机控制 LED1／LED2，表明板上控制链路可用，实际 GD32 固件与仓库源码的对应关系待查。
-- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，状态行可进入连接详情（状态、SSID、信号、IPv4，实时快照）；System 为系统信息、资源状态（SD 已挂载时显示容量 MB）、配置状态、关于四项子菜单。Tools 经 2026-10-01 收口的信息归位 Goal 改为「暂无工具」过渡页，原有 Wi-Fi、System Info、Assets、About 已全部迁入 Settings，番茄时钟由下一步独立任务实施。
+- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 已作为番茄到点提醒的总开关生效，Settings 的 Sound 页仍只读；`pomodoro_sound_enabled` 与 `focus_minutes`／`break_minutes`（schema v3，含 v1／v2 原位迁移）由番茄时钟提醒与阶段时长消费，已实机验收。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，状态行可进入连接详情（状态、SSID、信号、IPv4，实时快照）；System 为系统信息、资源状态（SD 已挂载时显示容量 MB）、配置状态、关于四项子菜单。Tools 经信息归位改为单入口页，2026-10-01 番茄时钟 Goal 实施并验收后显示唯一「番茄时钟」入口（正圆计时页与番茄设置）；原有 Wi-Fi、System Info、Assets、About 已全部迁入 Settings。
 
 ## 当前开发节点
 
@@ -43,7 +43,7 @@
 
 - **已完成：Launcher 顺序与 Tools／Settings 信息归位**（设计 `docs/launcher-tools-settings-reorganization-design.md`；施工 `goals/20260930-2146-launcher-settings-reorganization.md`）。2026-09-30 22:12 完成 CP1～CP4 代码实施：Launcher 注册顺序改为 `pc_monitor/tools/games/settings/hardware_test`（Games 第一页第三格，启动焦点在监控）；Settings 的 Wi-Fi 状态行进入连接详情（迁移自 Tools，实时快照每秒刷新），System 改为系统信息／资源状态／配置状态／关于四项子菜单；Tools 重写为「暂无工具」过渡页；i18n 追加 4 个文案 ID。2026-10-01 两轮实机验收通过（第一轮反馈资源状态页 SD 行改为已挂载时显示真实容量 MB，复验通过），负责人确认全部正常；证据类型为人工确认，未附串口日志或照片，英文回退未做损坏注入实机演示（静态核对）。CP6 文档已同步收口。
 
-- **待审设计：Tools 番茄时钟**（`docs/pomodoro-timer-design.md`）。拟采用黑白圆环与中央倒计时，固定 25 分钟专注／5 分钟休息，离开 App 或进入待机画面后继续计时，完成后返回页面可见结果，本版不弹全局提醒。仅设计，固件未实施或验证，视觉效果待目标板验收。
+- **已完成：Tools 番茄时钟**（设计 `docs/pomodoro-timer-design.md`；施工 `goals/20261001-1036-tools-pomodoro.md`）。2026-10-01 用户以 `/goal` 授权完成功能开发，当日 13:30 负责人实机验收通过，13:38 接手复核源码与文档并再次依据负责人验收确认收尾（口头确认，未附串口日志或照片；Settings 自测固件未单独运行，迁移逻辑以源码与宿主检查覆盖）。交付：CP0 收口（详情页 `↑` 进番茄设置不暂停计时；手动硬件测试优先，提醒不排队不补响）；独立 `Pomodoro Service`（64 位单调钟截止时间差、跨 App 继续计时、单次完成事件，阶段时长在开始时从 Settings 读取；**专注到点自动进入休息**，休息完成后停在「再来一轮」页，重置即按即生效）与 `Buzzer Service`（GPIO14／LEDC 唯一所有者，3 声 988 Hz 非阻塞提醒，Hardware Test 迁移到同一接口）；Settings Service 升级 schema v3（新增 `pomodoro_sound_enabled` 与 `focus_minutes`／`break_minutes`，v1／v2 blob 原位迁移保留原值，时长范围 1～180／1～60 分钟、默认 25／5）并把自测扩为 8 步；Tools 重写为菜单＋正圆计时页（86 px 圆环、中央「圆润玻璃」沙漏——贝塞尔采样 21 点折线，沙子为 6 条 2 px 实心阶梯条＋落沙＋10 帧翻转、左右 16 px 数字内移至 x=55／105）＋番茄设置三行（时长编辑与到点声音，`↑↓` 选行、`←→` 调分钟、离开行或 B 持久化、写失败回退并提示）；`↑` 进设置、B 逐层返回，计时相关视图隐藏全局 Wi-Fi 图标、退出恢复；设置行与详情选项行接入光带扫入特效（全局规则见 `AGENTS.md` UI 交互约定）；i18n 增至 234 个文案 ID。宿主可控时钟聚焦检查 41 项断言全部通过（`POMODORO_HOST_CHECK: PASS`），`git diff --check` 干净。验收过程修复四轮构建/实机暴露的问题（编译错误 5 处、`HG_PTS` 零填充点画出穿屏斜线、沙子形态、选项框类型混淆闪退、设置页行值错位），详见施工文档「实施记录」。
 
 - **已完成：方向键焦点切换光带扫入动效**（设计 `docs/directional-focus-transition-design.md`；施工 `goals/20260928-1037-directional-focus-sweep.md`）。2026-09-28 完成固件实现并当日收口：140 ms 浅白光带只在目标卡片／行内扫过（Launcher 12 px、Settings／Tools 8 px，初始值），静态焦点先更新，光带从旧项所在一侧扫入；快速连按取消前段，A 中断、页面销毁前均先删动画再删对象。首轮实机确认 Launcher 与 Settings 特效正常；同轮反馈 Tools 菜单无特效（原范围未覆盖），补接入 `xiaomiao_tools.c` 后由项目负责人烧录复验收口（「没问题了，我测过了」，附串口日志：三 App 开合 `screen children=2` 恒定、无新增错误）。未附动效视频，效果判定以负责人目视为准；参数未做调整。
 
@@ -81,10 +81,10 @@
 
 ## 下一步
 
-三项 UI 工作的实施顺序已由项目负责人确认：**Launcher 顺序与 Tools／Settings 信息归位 → Tools 番茄时钟 → 空闲待机画面**。每步独立实施并完成人工验收后再进入下一步；信息归位已完成，番茄时钟与空闲待机画面仍待审、未实施。
+三项 UI 工作的实施顺序已由项目负责人确认：**Launcher 顺序与 Tools／Settings 信息归位 → Tools 番茄时钟 → 空闲待机画面**。每步独立实施并完成人工验收后再进入下一步；信息归位与番茄时钟均已完成并验收（2026-10-01），空闲待机画面仍待审、未实施。
 
-- ~~信息归位~~：**已完成并验收（2026-10-01）**，入口与页面结构稳定，Tools 显示「暂无工具」；记录见上方已完成条目。设计见 `docs/launcher-tools-settings-reorganization-design.md`。
-- 番茄时钟：在归位后的 Tools 中增加唯一入口，按实际经过时间计时；验收开始、暂停、继续、完成及离开 App 后计时准确。该步不依赖待机功能，是当前实施顺序的下一步。设计见 `docs/pomodoro-timer-design.md`。
+- ~~信息归位~~：**已完成并验收（2026-10-01）**，入口与页面结构稳定；其时 Tools 为「暂无工具」过渡页，已被随后的番茄时钟实施取代；记录见上方已完成条目。设计见 `docs/launcher-tools-settings-reorganization-design.md`。
+- ~~番茄时钟~~：**已完成并验收（2026-10-01 13:30）**。专注到点自动进入休息、休息完成「再来一轮」、时长编辑（schema v3）、到点声音两级开关、光带特效；负责人口头确认通过，未附串口日志或照片，Settings 自测固件未单独运行。记录见上方已完成条目与施工文档「实施记录」。
 - 空闲待机画面：最后接入全局输入与覆盖层；验收待机期间番茄计时继续、六键唤醒并吞掉唤醒键、页面与焦点恢复、长按 B 不误触发及全 App 回归。设计见 `docs/screen-idle-design.md`。
 
 1. 节点 16 先取得板载 GD32 固件来源或可核对的固件读取结果，查明其与仓库源码的差异，再补齐 `0x40` 处理；电机协议按 README 与 ESP32 发送格式核对实现。电机未接入，实机动作保持未验证；MPU6050 实机行为另行标记为未验证。

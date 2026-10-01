@@ -134,7 +134,7 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_SETTINGS_DEFAULTS] = "Defaults applied",
     [XM_TEXT_SETTINGS_SETTINGS_UNAVAILABLE] = "Settings unavailable",
     [XM_TEXT_SETTINGS_NVS_ERROR] = "NVS error",
-    [XM_TEXT_SETTINGS_STORED_FIELDS] = "2 stored fields",
+    [XM_TEXT_SETTINGS_STORED_FIELDS] = "3 stored fields",
 
     [XM_TEXT_SETTINGS_PROV_TITLE] = "Wi-Fi Setup",
     [XM_TEXT_SETTINGS_PROV_WAITING] = "Waiting...",
@@ -262,6 +262,26 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_WIFI_DETAILS] = "Details",
     [XM_TEXT_SETTINGS_RESOURCES] = "Resources",
     [XM_TEXT_SETTINGS_CONFIG_STATUS] = "Config",
+
+    [XM_TEXT_TOOL_POMODORO] = "Pomodoro",
+    [XM_TEXT_POMO_TITLE_FOCUS] = "Focus",
+    [XM_TEXT_POMO_TITLE_BREAK] = "Break",
+    [XM_TEXT_POMO_TITLE_PAUSED] = "Paused",
+    [XM_TEXT_POMO_TITLE_FOCUS_DONE] = "Focus done",
+    [XM_TEXT_POMO_TITLE_BREAK_DONE] = "Break done",
+    [XM_TEXT_POMO_OPT_RESUME] = "Resume",
+    [XM_TEXT_POMO_OPT_RESET] = "Reset",
+    [XM_TEXT_POMO_HINT_IDLE] = "A Start  U Set  B Back",
+    [XM_TEXT_POMO_HINT_RUN] = "A Pause  B Back",
+    [XM_TEXT_POMO_HINT_DONE_FOCUS] = "A Again  B Back",
+    [XM_TEXT_POMO_SETTINGS] = "Pomodoro setup",
+    [XM_TEXT_POMO_LABEL_ALERT] = "Alert sound",
+    [XM_TEXT_POMO_SYSTEM_SOUND_OFF] = "System sound is off",
+    [XM_TEXT_POMO_HINT_SETUP] = "U/D Move  L/R Adjust  B Back",
+
+    [XM_TEXT_POMO_LABEL_FOCUS_LEN] = "Focus time",
+    [XM_TEXT_POMO_LABEL_BREAK_LEN] = "Break time",
+    [XM_TEXT_POMO_UNIT_MIN] = "min",
 };
 
 static const char *const s_text_zh[XM_TEXT_COUNT] = {
@@ -374,7 +394,7 @@ static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_SETTINGS_DEFAULTS] = "已应用默认值",
     [XM_TEXT_SETTINGS_SETTINGS_UNAVAILABLE] = "设置服务不可用",
     [XM_TEXT_SETTINGS_NVS_ERROR] = "NVS 错误",
-    [XM_TEXT_SETTINGS_STORED_FIELDS] = "已保存 2 项",
+    [XM_TEXT_SETTINGS_STORED_FIELDS] = "已保存 3 项",
 
     [XM_TEXT_SETTINGS_PROV_TITLE] = "Wi-Fi 配网",
     [XM_TEXT_SETTINGS_PROV_WAITING] = "等待中...",
@@ -502,6 +522,26 @@ static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_WIFI_DETAILS] = "连接详情",
     [XM_TEXT_SETTINGS_RESOURCES] = "资源状态",
     [XM_TEXT_SETTINGS_CONFIG_STATUS] = "配置状态",
+
+    [XM_TEXT_TOOL_POMODORO] = "番茄时钟",
+    [XM_TEXT_POMO_TITLE_FOCUS] = "专注",
+    [XM_TEXT_POMO_TITLE_BREAK] = "休息",
+    [XM_TEXT_POMO_TITLE_PAUSED] = "已暂停",
+    [XM_TEXT_POMO_TITLE_FOCUS_DONE] = "专注完成",
+    [XM_TEXT_POMO_TITLE_BREAK_DONE] = "休息结束",
+    [XM_TEXT_POMO_OPT_RESUME] = "继续",
+    [XM_TEXT_POMO_OPT_RESET] = "重置",
+    [XM_TEXT_POMO_HINT_IDLE] = "A 开始  ↑ 设置  B 返回",
+    [XM_TEXT_POMO_HINT_RUN] = "A 暂停  B 返回",
+    [XM_TEXT_POMO_HINT_DONE_FOCUS] = "A 再来一轮  B 返回",
+    [XM_TEXT_POMO_SETTINGS] = "番茄设置",
+    [XM_TEXT_POMO_LABEL_ALERT] = "到点声音",
+    [XM_TEXT_POMO_SYSTEM_SOUND_OFF] = "系统声音已关闭",
+    [XM_TEXT_POMO_HINT_SETUP] = "↑↓ 选择  ←→ 调整  B 返回",
+
+    [XM_TEXT_POMO_LABEL_FOCUS_LEN] = "专注时长",
+    [XM_TEXT_POMO_LABEL_BREAK_LEN] = "休息时长",
+    [XM_TEXT_POMO_UNIT_MIN] = "分钟",
 };
 
 /* Table geometry: a missing entry would read as NULL, not as a shift. */

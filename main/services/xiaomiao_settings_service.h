@@ -20,6 +20,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 
@@ -28,19 +29,24 @@ extern "C" {
 #endif
 
 /*
- * Business fields of the first schema version. Field ranges need no
- * runtime check on the way in: `bool` cannot hold anything but 0 or 1,
- * so a NULL pointer is the only invalid input a caller can hand to
- * xiaomiao_settings_set(). The 0/1 range check still runs on the NVS
- * side, where a damaged blob really can carry 2..255.
+ * Business fields of the current schema version (v3). Field ranges
+ * need no runtime check on the way in, so a NULL pointer is the only
+ * invalid input a caller can hand to xiaomiao_settings_set(); the NVS
+ * side still validates every stored field.
  *
- * Both fields are preferences for later nodes and have no effect yet:
- * wifi_auto_connect is consumed by node 10, sound_enabled by node 12.
- * The Settings App therefore offers no switch for either one.
+ * wifi_auto_connect is consumed by the Wi-Fi Service, sound_enabled by
+ * node 12, pomodoro_sound_enabled by the Tools Pomodoro reminder, and
+ * focus_minutes / break_minutes (1..180 / 1..60) are the Tools
+ * Pomodoro phase lengths. Legacy blobs are migrated in place: every
+ * field of the older schema keeps its value and the new fields get
+ * their defaults.
  */
 typedef struct {
     bool wifi_auto_connect;
     bool sound_enabled;
+    bool pomodoro_sound_enabled;
+    uint8_t focus_minutes;
+    uint8_t break_minutes;
 } xiaomiao_settings_t;
 
 /*

@@ -70,7 +70,9 @@
 #include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_agent_service.h"
 #include "services/xiaomiao_assets_service.h"
+#include "services/xiaomiao_buzzer_service.h"
 #include "services/xiaomiao_font_service.h"
+#include "services/xiaomiao_pomodoro_service.h"
 #include "services/xiaomiao_settings_service.h"
 #include "services/xiaomiao_storage_service.h"
 #include "services/xiaomiao_wifi_service.h"
@@ -224,10 +226,10 @@
 #define ADC_EXT_IN2_CHAN            ADC_CHANNEL_5
 #define ADC_RAW_MAX                 4095
 
-#define BUZZER_LEDC_MODE            LEDC_LOW_SPEED_MODE
-#define BUZZER_LEDC_TIMER           LEDC_TIMER_0
-#define BUZZER_LEDC_CHANNEL         LEDC_CHANNEL_0
-#define BUZZER_DUTY                 128
+/* The buzzer's LEDC timer 0 / channel 0 and GPIO14 are owned by the
+ * Buzzer Service since goal 20261001-1036; Hardware Test only calls
+ * its public interface. The extension PWM below reuses the same
+ * low-speed mode on its own timer and channels. */
 
 #define EXT_LEDC_TIMER              LEDC_TIMER_1
 #define EXT_LEDC_CHANNEL1           LEDC_CHANNEL_1
@@ -293,7 +295,6 @@ typedef struct {
     bool i2c_ready;
     bool gd32_present;
     bool mpu_present;
-    bool buzzer_ready;
     bool adc_ready;
     bool ext_pwm_ready;
     bool led1_on;
@@ -370,7 +371,6 @@ static esp_lcd_panel_io_handle_t s_lcd_io_handle;
 static i2c_master_bus_handle_t s_i2c_bus;
 static i2c_master_dev_handle_t s_gd32_dev;
 static i2c_master_dev_handle_t s_mpu_dev;
-static uint32_t s_buzzer_stop_at;
 static uint32_t s_buzzer_freq_hz = 988;
 static uint32_t s_action_until_ms;
 static uint32_t s_last_gd32_probe_ms;
@@ -532,43 +532,14 @@ static esp_err_t gd32_motor_set(uint8_t motor, bool dir, uint8_t speed)
     return err;
 }
 
-static void buzzer_stop(void)
-{
-    if (!s_board.buzzer_ready) {
-        return;
-    }
-    ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
-    s_buzzer_stop_at = 0;
-}
-
-static void buzzer_beep(uint32_t freq_hz, uint32_t ms)
-{
-    if (!s_board.buzzer_ready) {
-        return;
-    }
-    esp_err_t err = ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, freq_hz);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Buzzer frequency %lu Hz failed: %s", (unsigned long)freq_hz, esp_err_to_name(err));
-        return;
-    }
-    err = ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, BUZZER_DUTY);
-    if (err == ESP_OK) {
-        err = ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
-    }
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Buzzer duty update failed: %s", esp_err_to_name(err));
-        return;
-    }
-    s_buzzer_stop_at = lv_tick_get() + ms;
-}
-
 static void hardware_process_timers(void)
 {
-    uint32_t now = lv_tick_get();
-
-    if (s_buzzer_stop_at && (int32_t)(now - s_buzzer_stop_at) >= 0) {
-        buzzer_stop();
-    }
+    /* The Buzzer Service owns every GPIO14 timing (manual beep stop
+     * deadlines and the alert sequence); the Pomodoro completion poll
+     * runs in the same loop, independent of any page (goal
+     * 20261001-1036). */
+    xiaomiao_buzzer_service_poll();
+    xiaomiao_pomodoro_service_poll();
 }
 
 static void mpu_probe_and_init(bool force)
@@ -743,9 +714,9 @@ static esp_err_t ext_output_set(uint8_t index, bool on)
     const ledc_channel_t channel = ext_pwm_channel(index);
     const uint32_t duty = on ? s_board.ext_pwm[index] : 0;
 
-    esp_err_t err = ledc_set_duty(BUZZER_LEDC_MODE, channel, duty);
+    esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     if (err == ESP_OK) {
-        err = ledc_update_duty(BUZZER_LEDC_MODE, channel);
+        err = ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
     }
     if (err == ESP_OK) {
         s_board.ext_out[index] = on && duty > 0;
@@ -844,7 +815,7 @@ static void adc_init(void)
 static void ext_io_init(void)
 {
     ledc_timer_config_t timer_cfg = {
-        .speed_mode = BUZZER_LEDC_MODE,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
         .timer_num = EXT_LEDC_TIMER,
         .freq_hz = EXT_PWM_FREQ_HZ,
@@ -859,7 +830,7 @@ static void ext_io_init(void)
     const ledc_channel_config_t channel_cfg[] = {
         {
             .gpio_num = PIN_NUM_EXT_OUT1,
-            .speed_mode = BUZZER_LEDC_MODE,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
             .channel = EXT_LEDC_CHANNEL1,
             .intr_type = LEDC_INTR_DISABLE,
             .timer_sel = EXT_LEDC_TIMER,
@@ -869,7 +840,7 @@ static void ext_io_init(void)
         },
         {
             .gpio_num = PIN_NUM_EXT_OUT2,
-            .speed_mode = BUZZER_LEDC_MODE,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
             .channel = EXT_LEDC_CHANNEL2,
             .intr_type = LEDC_INTR_DISABLE,
             .timer_sel = EXT_LEDC_TIMER,
@@ -939,35 +910,13 @@ static void i2c_init(void)
 
 static void buzzer_init(void)
 {
-    ledc_timer_config_t timer_cfg = {
-        .speed_mode = BUZZER_LEDC_MODE,
-        .duty_resolution = LEDC_TIMER_8_BIT,
-        .timer_num = BUZZER_LEDC_TIMER,
-        .freq_hz = 880,
-        .clk_cfg = LEDC_AUTO_CLK,
-    };
-    esp_err_t err = ledc_timer_config(&timer_cfg);
+    /* Buzzer ownership moved to the Buzzer Service (goal
+     * 20261001-1036): init failure only costs the sound capability,
+     * the dashboard and the Pomodoro timer keep working. */
+    esp_err_t err = xiaomiao_buzzer_service_init();
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Buzzer timer init failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    ledc_channel_config_t channel_cfg = {
-        .gpio_num = PIN_NUM_BUZZER,
-        .speed_mode = BUZZER_LEDC_MODE,
-        .channel = BUZZER_LEDC_CHANNEL,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = BUZZER_LEDC_TIMER,
-        .duty = 0,
-        .hpoint = 0,
-        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
-    };
-    err = ledc_channel_config(&channel_cfg);
-    if (err == ESP_OK) {
-        s_board.buzzer_ready = true;
-    }
-    else {
-        ESP_LOGW(TAG, "Buzzer channel init failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Buzzer service init failed: %s (0x%x), sound disabled",
+                 esp_err_to_name(err), (unsigned)err);
     }
 }
 
@@ -1922,8 +1871,8 @@ static void ui_refresh(void)
     case UI_PAGE_BUZZER:
         lv_label_set_text_fmt(s_ui.value, "%lu Hz", (unsigned long)s_buzzer_freq_hz);
         lv_label_set_text(s_ui.sub,
-                          s_board.buzzer_ready ? "GPIO14 PWM"
-                                               : xiaomiao_text(XM_TEXT_HT_PWM_INIT_FAIL));
+                          xiaomiao_buzzer_service_ready() ? "GPIO14 PWM"
+                                                          : xiaomiao_text(XM_TEXT_HT_PWM_INIT_FAIL));
         ui_set_hint(xiaomiao_text(XM_TEXT_HT_HINT_BUZZER));
         ui_set_bar((int)((s_buzzer_freq_hz - 440) * 100 / (1760 - 440)));
         break;
@@ -2113,9 +2062,9 @@ static void ui_action(void)
                                                : XM_TEXT_HT_ACT_LED_CMD_FAIL));
         break;
     case UI_PAGE_BUZZER:
-        buzzer_beep(s_buzzer_freq_hz, 140);
-        set_action(xiaomiao_text(s_board.buzzer_ready ? XM_TEXT_HT_ACT_BEEP
-                                                      : XM_TEXT_HT_ACT_BUZZER_INIT_FAIL));
+        xiaomiao_buzzer_service_beep(s_buzzer_freq_hz, 140);
+        set_action(xiaomiao_text(xiaomiao_buzzer_service_ready() ? XM_TEXT_HT_ACT_BEEP
+                                                                 : XM_TEXT_HT_ACT_BUZZER_INIT_FAIL));
         break;
     case UI_PAGE_MOTOR1:
         ui_motor_toggle(0);
@@ -2148,7 +2097,7 @@ static void ui_action(void)
     }
 
     if (err == ESP_OK && s_ui.page_id != UI_PAGE_BUZZER) {
-        buzzer_beep(660, 35);
+        xiaomiao_buzzer_service_beep(660, 35);
     }
     ui_refresh();
 }
@@ -2183,7 +2132,7 @@ static void ui_cancel(void)
         }
         break;
     case UI_PAGE_BUZZER:
-        buzzer_stop();
+        xiaomiao_buzzer_service_stop_manual();
         set_action(xiaomiao_text(XM_TEXT_HT_ACT_BUZZER_STOP));
         break;
     case UI_PAGE_SD: {
@@ -2232,7 +2181,7 @@ static void ui_cancel(void)
         }
         break;
     default:
-        buzzer_stop();
+        xiaomiao_buzzer_service_stop_manual();
         set_action(xiaomiao_text(XM_TEXT_HT_ACT_CANCELED));
         break;
     }
@@ -2407,8 +2356,9 @@ static void hardware_test_close(void)
 {
     hardware_test_b_gesture_reset();
 
-    /* Stop continuous outputs before the UI disappears (decision 11). */
-    buzzer_stop();
+    /* Stop continuous outputs before the UI disappears (decision 11).
+     * Only the manual owner is stopped; a Pomodoro alert is separate. */
+    xiaomiao_buzzer_service_stop_manual();
 
     for (uint8_t motor = 0; motor < 2; ++motor) {
         if (!s_board.motor_running[motor]) {
@@ -2772,6 +2722,18 @@ void app_main(void)
     if (settings_err != ESP_OK) {
         ESP_LOGW(TAG, "Settings service unavailable: %s (0x%x), continuing with defaults",
                  esp_err_to_name(settings_err), (unsigned)settings_err);
+    }
+
+    /*
+     * The Pomodoro Service holds the Tools timer state. It touches no
+     * hardware and never fails in practice; the Tools App keeps a
+     * readable snapshot even if a later stage degraded (goal
+     * 20261001-1036).
+     */
+    esp_err_t pomodoro_err = xiaomiao_pomodoro_service_init();
+    if (pomodoro_err != ESP_OK) {
+        ESP_LOGW(TAG, "Pomodoro service init failed: %s (0x%x)",
+                 esp_err_to_name(pomodoro_err), (unsigned)pomodoro_err);
     }
 
     /*

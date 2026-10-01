@@ -28,6 +28,10 @@
 
 static const char TAG[] = "wifi_ind";
 
+/* Set by xiaomiao_wifi_indicator_set_visible(); the timer skips its
+ * refresh while hidden, so a hidden indicator never draws. */
+static bool s_visible = true;
+
 /*
  * Geometry. Back to the compact size: an empty slot is expressed by a
  * dark fill that all but disappears into the background, not by an
@@ -220,7 +224,27 @@ static void indicator_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
 
+    if (!s_visible) {
+        return;
+    }
+
     indicator_refresh();
+}
+
+void xiaomiao_wifi_indicator_set_visible(bool visible)
+{
+    s_visible = visible;
+
+    if (s_root == NULL) {
+        return;
+    }
+
+    if (visible) {
+        lv_obj_clear_flag(s_root, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 esp_err_t xiaomiao_wifi_indicator_create(void)
@@ -320,4 +344,5 @@ void xiaomiao_wifi_indicator_destroy(void)
     s_fail_started_ms = 0;
     s_anim_last_ms = 0;
     s_anim_lit = 0;
+    s_visible = true;
 }

@@ -292,6 +292,29 @@ typedef enum {
     XM_TEXT_SETTINGS_RESOURCES,
     XM_TEXT_SETTINGS_CONFIG_STATUS,
 
+    /* Tools Pomodoro (goal 20261001-1036). Appended so stable IDs keep
+     * their values. Technical markers (5 min, digits) stay literal. */
+    XM_TEXT_TOOL_POMODORO,
+    XM_TEXT_POMO_TITLE_FOCUS,
+    XM_TEXT_POMO_TITLE_BREAK,
+    XM_TEXT_POMO_TITLE_PAUSED,
+    XM_TEXT_POMO_TITLE_FOCUS_DONE,
+    XM_TEXT_POMO_TITLE_BREAK_DONE,
+    XM_TEXT_POMO_OPT_RESUME,
+    XM_TEXT_POMO_OPT_RESET,
+    XM_TEXT_POMO_HINT_IDLE,
+    XM_TEXT_POMO_HINT_RUN,
+    XM_TEXT_POMO_HINT_DONE_FOCUS,
+    XM_TEXT_POMO_SETTINGS,
+    XM_TEXT_POMO_LABEL_ALERT,
+    XM_TEXT_POMO_SYSTEM_SOUND_OFF,
+    XM_TEXT_POMO_HINT_SETUP,
+
+    /* Duration editing added on 2026-10-01 after user feedback. */
+    XM_TEXT_POMO_LABEL_FOCUS_LEN,
+    XM_TEXT_POMO_LABEL_BREAK_LEN,
+    XM_TEXT_POMO_UNIT_MIN,
+
     XM_TEXT_COUNT
 } xiaomiao_text_id_t;
 

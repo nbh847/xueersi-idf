@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>番茄时钟 · 圆润玻璃</title><style>
+body{margin:0;padding:24px;background:#181818;color:#eee;font:16px system-ui,sans-serif}main{max-width:600px;margin:auto}h1{font-size:22px}p{color:#bbb;line-height:1.6}.viz-carousel{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}.viz-carousel section[hidden]{display:block}.viz-carousel section:before{content:attr(data-variant);display:block;text-align:center;padding-top:12px}.viz-carousel section{background:#242424;border-radius:12px}.viz-row{display:flex;justify-content:center;align-items:center;gap:16px;flex-wrap:wrap;margin-top:24px}.btn{font:inherit;padding:10px 16px;background:#eee;color:#111;border:0;border-radius:6px;cursor:pointer}#pomodoro-styles .stage{min-height:256px}#pomodoro-styles svg{width:320px;max-width:calc(100% - 24px)}@media(max-width:400px){body{padding:12px}}
+.settings-layout{display:flex;gap:24px;flex-wrap:wrap;align-items:center}.settings-layout svg{max-width:100%;height:auto}.sand-glass{transform-origin:0 0}.variant-caption{text-align:center;margin:0 0 16px;font-size:14px}
+</style></head><body><main><h1>番茄时钟 · 圆润玻璃（已选定）</h1><p>已选定圆润玻璃沙漏：保持正圆，圆环内部依次为左侧数字、圆润玻璃沙漏、右侧数字；数字缩小至 16 px，留出翻转间距。160 × 128，放大 2 倍；单条落沙、6 档沙堆、固定翻转帧。外观及性能仍需实机验收。</p><div id="pomodoro-styles">
+  <div class="viz-carousel viz-dotted-background" aria-label="已选定的番茄时钟样式" data-previous-label="上一款" data-next-label="下一款">
+<section data-variant="圆润玻璃"><div class="stage"><svg viewBox="0 0 160 128" role="img" aria-label="圆润玻璃沙漏"><rect width="160" height="128" fill="#000"/><text x="80" y="15" class="heading">专注</text><g class="timer-face"><circle cx="80" cy="64" r="43" class="track"/><circle cx="80" cy="64" r="43" class="remaining" stroke-dasharray="199 271" transform="rotate(-90 80 64)"/><text x="51" y="69" class="time minutes">18</text><text x="109" y="69" class="time seconds">24</text></g><g class="hourglass-position" transform="translate(80 64)"><g class="sand-glass" transform="scale(0.82)" data-motion="rounded" fill="none"><g class="rotating-shell"><path d="M-9 -18H9C9 -8 5 -5 2 -2Q0 0 2 2C5 5 9 8 9 18H-9C-9 8 -5 5 -2 2Q0 0 -2 -2C-5 -5 -9 -8 -9 -18Z" fill="#181818" stroke="#eee" stroke-width="1.5"/><path d="M-5 -13V-9M-5 10V13" stroke="#777" stroke-width="1"/><path class="upper-sand" fill="#f2f2f2" stroke="none"/><path class="lower-sand" fill="#f2f2f2" stroke="none"/><path class="falling-sand" stroke="#ddd" stroke-width="1"/></g></g></g><text x="8" y="121" class="hint action">A 暂停</text><text x="152" y="121" class="hint right">B 返回</text></svg></div><p class="variant-caption">正圆 · 小数字 · 中央沙漏</p></section>
+
+
+
+
+  </div>
+  <div class="viz-row"><button type="button" class="btn" id="pomodoro-complete">模拟到点 · 3 声</button><button type="button" class="btn" id="pomodoro-restart">恢复运行预览</button><button type="button" class="btn" id="pomodoro-settings">番茄设置</button><span class="text-small">160 × 128 · 2 倍放大预览</span><button type="button" class="btn" id="pomodoro-state" aria-pressed="false">查看暂停状态</button></div>
+</div>
+<style>
+  #pomodoro-styles .stage { min-height:280px; display:flex; align-items:center; justify-content:center; padding:12px 0; }
+  #pomodoro-styles svg { width:320px; max-width:100%; height:auto; background:#000; }
+  #pomodoro-styles svg text { fill:#f2f2f2; font-family:"Noto Sans SC","PingFang SC",sans-serif; font-size:12px; font-weight:400; }
+  #pomodoro-styles .heading { text-anchor:middle; }
+  #pomodoro-styles svg .time { font-family:Arial,sans-serif; font-size:16px; font-variant-numeric:tabular-nums; text-anchor:middle; }
+  #pomodoro-styles .right { text-anchor:end; }
+  #pomodoro-styles .track { fill:none; stroke:#383838; stroke-width:5; }
+  #pomodoro-styles .remaining { fill:none; stroke:#f2f2f2; stroke-width:5; }
+</style>
+
+<section id="timer-settings" hidden aria-label="番茄时钟设置"><h2>番茄时钟 → 设置</h2><div class="settings-layout"><svg viewBox="0 0 160 128" width="320" role="img" aria-label="设备设置页预览"><rect width="160" height="128" fill="#000"/><g font-family="sans-serif" font-size="12" fill="#f2f2f2"><text x="80" y="17" text-anchor="middle">番茄设置</text><rect x="6" y="31" width="148" height="26" rx="3" fill="#f2f2f2"/><text x="13" y="48" fill="#000">到点声音</text><text id="sound-label" x="147" y="48" text-anchor="end" fill="#000">开启</text><text id="system-label" x="8" y="78">短响 3 声</text><text x="8" y="121">A 切换</text><text x="152" y="121" text-anchor="end">B 返回</text></g></svg><div><label><input id="timer-sound" type="checkbox" checked> 到点声音（默认开启）</label><p><label><input id="system-sound" type="checkbox" checked> 系统声音总开关（模拟）</label></p><p>专注、休息到点各提醒一次。<br>每声 150 毫秒，间隔 150 毫秒。<br>系统静音时，番茄提醒也静音。<br>固件计划保存开关，预览仅保留本页状态。</p></div></div></section><p id="sound-status" role="status" aria-live="polite">点击“模拟到点”查看完成画面并试听。</p></main><script>
+(() => {
+  const root = document.getElementById('pomodoro-styles');
+  const button = root.querySelector('#pomodoro-state');
+  let paused=false,completed=false,audio=null;
+  const sound=document.getElementById('timer-sound');
+  const system=document.getElementById('system-sound');
+  const status=document.getElementById('sound-status');
+  // Cached six sand levels and ten flip frames; update only changed marks.
+  const glasses=[...root.querySelectorAll('.sand-glass')].map(glass=>({
+    glass,shell:glass.querySelector('.rotating-shell'),upper:glass.querySelector('.upper-sand'),lower:glass.querySelector('.lower-sand'),drop:glass.querySelector('.falling-sand')
+  }));
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)');
+  const sandLevels=Array.from({length:6},(_,i)=>{
+    const fill=1-i/5;
+    return {upper:fill?`M${-7*fill} ${-3-12*fill}H${7*fill}L0 -3Z`:'',lower:i?`M-7 16L0 ${16-12*i/5}L7 16Z`:''};
+  });
+  const flipFrames=[0,5,17,35,61,94,125,151,171,180];
+  let elapsed=0,lastTick=null,lastPaint=0;
+  let previousLevel=-1,previousFlip=-1,previousDrop='';
+  function sandFrame(){
+    const phase=elapsed%6000,flipping=phase>=5500;
+    const level=completed?5:Math.min(5,Math.floor(phase/1100));
+    const flip=completed||!flipping?0:Math.min(9,Math.floor((phase-5500)/50));
+    const y=[2,4,6,8][Math.floor(phase/100)%4];
+    const drop=completed||flipping?'':`M0 ${y}v2`;
+    glasses.forEach(parts=>{
+      if(flip!==previousFlip)parts.shell.setAttribute('transform',`rotate(${flipFrames[flip]})`);
+      if(level!==previousLevel){parts.upper.setAttribute('d',sandLevels[level].upper);parts.lower.setAttribute('d',sandLevels[level].lower);}
+      if(drop!==previousDrop)parts.drop.setAttribute('d',drop);
+    });
+    previousLevel=level;previousFlip=flip;previousDrop=drop;
+  }
+  function animate(now){
+    if(lastTick===null)lastTick=now;
+    const delta=now-lastTick;lastTick=now;
+    if(!document.hidden&&!paused&&!completed&&!reduced.matches){
+      elapsed+=Math.min(delta,100);
+      const interval=elapsed%6000>=5500?50:100;
+      if(now-lastPaint>=interval){lastPaint=now;sandFrame();}
+    }
+    requestAnimationFrame(animate);
+  }
+  sandFrame();requestAnimationFrame(animate);
+  function draw(){
+    sandFrame();
+    root.classList.toggle('paused',paused);
+    root.classList.toggle('completed',completed);
+    root.querySelectorAll('.heading').forEach(el=>el.textContent=completed?'专注完成':paused?'已暂停':'专注');
+    root.querySelector('.minutes').textContent=completed?'00':'18';
+    root.querySelector('.seconds').textContent=completed?'00':'24';
+    root.querySelectorAll('.action').forEach(el=>el.textContent=completed?'再来 / 休息':paused?'继续 / 重置':'A 暂停');
+    root.querySelectorAll('.remaining,.remaining-fill').forEach(el=>el.style.visibility=completed?'hidden':'visible');
+    button.textContent=paused?'查看运行状态':'查看暂停状态';
+    button.setAttribute('aria-pressed',String(paused));
+  }
+  button.addEventListener('click',()=>{completed=false;paused=!paused;draw();});
+  document.getElementById('pomodoro-restart').addEventListener('click',()=>{completed=false;paused=false;elapsed=0;draw();});
+  document.getElementById('pomodoro-settings').addEventListener('click',()=>{
+    const panel=document.getElementById('timer-settings');panel.hidden=!panel.hidden;
+    if(!panel.hidden)panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  });
+  function soundLabels(){
+    document.getElementById('sound-label').textContent=sound.checked?'开启':'关闭';
+    document.getElementById('system-label').textContent=system.checked?'短响 3 声':'系统声音已关闭';
+  }
+  sound.addEventListener('change',soundLabels);system.addEventListener('change',soundLabels);
+  document.getElementById('pomodoro-complete').addEventListener('click',async()=>{
+    if(completed){status.textContent='本段已提醒过，恢复运行预览后可再次模拟。';return;}
+    completed=true;paused=false;draw();
+    if(!sound.checked||!system.checked){status.textContent='已完成；声音开关关闭，本次静音。';return;}
+    try{
+      const Audio=window.AudioContext||window.webkitAudioContext;
+      if(!Audio)throw new Error('unavailable');
+      audio=audio||new Audio();await audio.resume();
+      for(let i=0;i<3;i++){
+        const start=audio.currentTime+i*0.3;
+        const osc=audio.createOscillator(),gain=audio.createGain();
+        osc.frequency.value=988;osc.type='square';gain.gain.setValueAtTime(0.025,start);
+        gain.gain.setValueAtTime(0,start+0.15);osc.connect(gain);gain.connect(audio.destination);
+        osc.start(start);osc.stop(start+0.15);osc.onended=()=>{osc.disconnect();gain.disconnect();};
+      }
+      status.textContent='已完成，已触发 3 声试听；实际蜂鸣器音色与响度需实机确认。';
+    }catch(error){status.textContent='已显示完成状态；浏览器无法播放试听声音。';}
+  });
+})();
+</script>
+</body></html>
