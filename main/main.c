@@ -67,6 +67,7 @@
 #include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_launcher.h"
 #include "framework/xiaomiao_navigation.h"
+#include "framework/xiaomiao_screen_idle.h"
 #include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_agent_service.h"
 #include "services/xiaomiao_assets_service.h"
@@ -1110,6 +1111,19 @@ static void keypad_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     else {
         data->state = LV_INDEV_STATE_RELEASED;
         data->key = last_key;
+    }
+
+    /*
+     * Screen idle input boundary (goal 20261001-1449): the debounced
+     * overall state feeds the idle module first. While the idle screen
+     * is up and until every wake key is released, LVGL sees a released
+     * keypad and the Hardware Test B gesture is never updated, so the
+     * wake press cannot open, pause, page or exit anything.
+     */
+    xiaomiao_screen_idle_report_key(stable_index >= 0);
+    if (xiaomiao_screen_idle_input_swallowed()) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
     }
 
     hardware_test_b_gesture_update(data->key, data->state == LV_INDEV_STATE_PRESSED);
@@ -2533,6 +2547,17 @@ static void lvgl_task(void *arg)
                  esp_err_to_name(boot_err), (unsigned)boot_err);
     }
 
+    /*
+     * Screen idle (goal 20261001-1449): initialized on the UI thread
+     * once, polled every loop iteration. A failure only costs the idle
+     * feature; input and the Launcher keep working.
+     */
+    esp_err_t idle_err = xiaomiao_screen_idle_init();
+    if (idle_err != ESP_OK) {
+        ESP_LOGW(TAG, "screen idle unavailable: %s (0x%x)",
+                 esp_err_to_name(idle_err), (unsigned)idle_err);
+    }
+
     s_lcd_first_flush_done = false;
     lv_refr_now(NULL);
     for (uint8_t i = 0; i < 100 && !s_lcd_first_flush_done; ++i) {
@@ -2543,6 +2568,7 @@ static void lvgl_task(void *arg)
     while (true) {
         hardware_process_timers();
         hardware_test_b_gesture_poll();
+        xiaomiao_screen_idle_poll();
 
         if (lv_tick_elaps(last_update_ms) >= UI_REFRESH_PERIOD_MS) {
             last_update_ms = lv_tick_get();

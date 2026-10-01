@@ -41,6 +41,14 @@ void xiaomiao_wifi_indicator_destroy(void);
  */
 void xiaomiao_wifi_indicator_set_visible(bool visible);
 
+/*
+ * Current visibility as last set by xiaomiao_wifi_indicator_set_visible().
+ * The Screen Idle overlay reads it before hiding the icon so the wake
+ * path can restore exactly what the page underneath expects (goal
+ * 20261001-1449). Safe to call at any time.
+ */
+bool xiaomiao_wifi_indicator_is_visible(void);
+
 #ifdef __cplusplus
 }
 #endif

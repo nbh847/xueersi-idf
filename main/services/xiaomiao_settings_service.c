@@ -33,13 +33,14 @@ static const char TAG[] = "settings_svc";
 /* Fixed identity of the stored entry (goal node 9, "fixed identity"). */
 #define SETTINGS_NVS_NAMESPACE "xiaomiao"
 #define SETTINGS_NVS_KEY       "settings"
-/* v2 added pomodoro_sound_enabled, v3 adds the Pomodoro phase lengths
- * (goal 20261001-1036). A stored v1 or v2 entry is migrated in place:
+/* v2 added pomodoro_sound_enabled, v3 added the Pomodoro phase lengths
+ * (goal 20261001-1036), v4 adds the UI idle minutes (goal
+ * 20261001-1449). A stored v1, v2 or v3 entry is migrated in place:
  * every old value is preserved and the new fields get their defaults. */
-#define SETTINGS_BLOB_VERSION  3
-/* The payload behind the 4-byte header: three booleans and two minute
+#define SETTINGS_BLOB_VERSION  4
+/* The payload behind the 4-byte header: three booleans and three minute
  * counts. */
-#define SETTINGS_BLOB_PAYLOAD  5
+#define SETTINGS_BLOB_PAYLOAD  6
 
 /* Accepted ranges of the v3 minute fields; anything outside them means
  * the stored entry is damaged and the defaults are restored. */
@@ -49,6 +50,16 @@ static const char TAG[] = "settings_svc";
 #define SETTINGS_BREAK_MAX_MINUTES 60
 #define SETTINGS_DEFAULT_FOCUS_MINUTES 25
 #define SETTINGS_DEFAULT_BREAK_MINUTES 5
+
+/* v4 idle minutes: 0 disables the idle screen, the rest are the menu
+ * candidates (goal 20261001-1449, "Configuration and migration"). */
+#define SETTINGS_DEFAULT_IDLE_MINUTES 2
+
+static bool settings_idle_minutes_valid(uint8_t minutes)
+{
+    return minutes == 0 || minutes == 1 || minutes == 2 ||
+           minutes == 5 || minutes == 10;
+}
 
 /*
  * Private on-Flash layouts. Fixed-width integers plus an explicit
@@ -64,10 +75,21 @@ typedef struct {
     uint8_t pomodoro_sound_enabled;
     uint8_t focus_minutes;
     uint8_t break_minutes;
+    uint8_t screen_idle_minutes;
+} settings_blob_v4_t;
+
+/* The previous layouts, read only for the older -> v4 migrations. */
+typedef struct {
+    uint16_t schema_version;
+    uint16_t payload_size;
+    uint8_t wifi_auto_connect;
+    uint8_t sound_enabled;
+    uint8_t pomodoro_sound_enabled;
+    uint8_t focus_minutes;
+    uint8_t break_minutes;
     uint8_t reserved;
 } settings_blob_v3_t;
 
-/* The previous layouts, read only for the v1/v2 -> v3 migrations. */
 typedef struct {
     uint16_t schema_version;
     uint16_t payload_size;
@@ -87,6 +109,8 @@ typedef struct {
 
 /* The decoder reads fixed offsets, so a padding change must not slip
  * through unnoticed. */
+_Static_assert(sizeof(settings_blob_v4_t) == 10,
+               "settings blob v4 must stay 10 bytes");
 _Static_assert(sizeof(settings_blob_v3_t) == 10,
                "settings blob v3 must stay 10 bytes");
 _Static_assert(sizeof(settings_blob_v2_t) == 8,
@@ -110,6 +134,7 @@ static void settings_defaults(xiaomiao_settings_t *settings)
     settings->pomodoro_sound_enabled = true;
     settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
     settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
+    settings->screen_idle_minutes = SETTINGS_DEFAULT_IDLE_MINUTES;
 }
 
 static const char *settings_source_name(xiaomiao_settings_source_t source)
@@ -128,10 +153,10 @@ static const char *settings_source_name(xiaomiao_settings_source_t source)
 }
 
 static void settings_blob_encode(const xiaomiao_settings_t *settings,
-                                 settings_blob_v3_t *blob)
+                                 settings_blob_v4_t *blob)
 {
-    /* Zero first, so the reserved byte never carries stale stack data
-     * into Flash. */
+    /* Zero first, so a future reserved byte never carries stale stack
+     * data into Flash. */
     memset(blob, 0, sizeof(*blob));
     blob->schema_version = SETTINGS_BLOB_VERSION;
     blob->payload_size = SETTINGS_BLOB_PAYLOAD;
@@ -140,8 +165,23 @@ static void settings_blob_encode(const xiaomiao_settings_t *settings,
     blob->pomodoro_sound_enabled = settings->pomodoro_sound_enabled ? 1 : 0;
     blob->focus_minutes = settings->focus_minutes;
     blob->break_minutes = settings->break_minutes;
+    blob->screen_idle_minutes = settings->screen_idle_minutes;
 }
 
+/* Current layout. */
+static void settings_blob_decode_v4(const settings_blob_v4_t *blob,
+                                    xiaomiao_settings_t *settings)
+{
+    settings->wifi_auto_connect = (blob->wifi_auto_connect != 0);
+    settings->sound_enabled = (blob->sound_enabled != 0);
+    settings->pomodoro_sound_enabled = (blob->pomodoro_sound_enabled != 0);
+    settings->focus_minutes = blob->focus_minutes;
+    settings->break_minutes = blob->break_minutes;
+    settings->screen_idle_minutes = blob->screen_idle_minutes;
+}
+
+/* The v3 layout has no idle minutes; the new field starts at its
+ * default. */
 static void settings_blob_decode_v3(const settings_blob_v3_t *blob,
                                     xiaomiao_settings_t *settings)
 {
@@ -150,6 +190,7 @@ static void settings_blob_decode_v3(const settings_blob_v3_t *blob,
     settings->pomodoro_sound_enabled = (blob->pomodoro_sound_enabled != 0);
     settings->focus_minutes = blob->focus_minutes;
     settings->break_minutes = blob->break_minutes;
+    settings->screen_idle_minutes = SETTINGS_DEFAULT_IDLE_MINUTES;
 }
 
 /* The v2 layout has no phase lengths; the new fields start at their
@@ -162,6 +203,7 @@ static void settings_blob_decode_v2(const settings_blob_v2_t *blob,
     settings->pomodoro_sound_enabled = (blob->pomodoro_sound_enabled != 0);
     settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
     settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
+    settings->screen_idle_minutes = SETTINGS_DEFAULT_IDLE_MINUTES;
 }
 
 /* The v1 layout has no pomodoro fields at all. */
@@ -173,6 +215,7 @@ static void settings_blob_decode_v1(const settings_blob_v1_t *blob,
     settings->pomodoro_sound_enabled = true;
     settings->focus_minutes = SETTINGS_DEFAULT_FOCUS_MINUTES;
     settings->break_minutes = SETTINGS_DEFAULT_BREAK_MINUTES;
+    settings->screen_idle_minutes = SETTINGS_DEFAULT_IDLE_MINUTES;
 }
 
 /*
@@ -182,7 +225,7 @@ static void settings_blob_decode_v1(const settings_blob_v1_t *blob,
  * but returns a shorter one with the real length, so `length` is
  * checked rather than assumed.
  */
-static bool settings_blob_v3_is_valid(const settings_blob_v3_t *blob, size_t length)
+static bool settings_blob_v4_is_valid(const settings_blob_v4_t *blob, size_t length)
 {
     if (length != sizeof(*blob)) {
         return false;
@@ -205,8 +248,34 @@ static bool settings_blob_v3_is_valid(const settings_blob_v3_t *blob, size_t len
         blob->break_minutes > SETTINGS_BREAK_MAX_MINUTES) {
         return false;
     }
+    if (!settings_idle_minutes_valid(blob->screen_idle_minutes)) {
+        return false;
+    }
 
     return true;
+}
+
+/* A stored v3 entry keeps its five fields; only the idle minutes are
+ * missing and they start at the default. */
+static bool settings_blob_v3_is_migratable(const settings_blob_v3_t *blob, size_t length)
+{
+    if (length != sizeof(*blob)) {
+        return false;
+    }
+    if (blob->schema_version != 3 || blob->payload_size != 5) {
+        return false;
+    }
+    if (blob->wifi_auto_connect > 1 || blob->sound_enabled > 1 ||
+        blob->pomodoro_sound_enabled > 1) {
+        return false;
+    }
+    if (blob->focus_minutes < SETTINGS_FOCUS_MIN_MINUTES ||
+        blob->focus_minutes > SETTINGS_FOCUS_MAX_MINUTES) {
+        return false;
+    }
+
+    return blob->break_minutes >= SETTINGS_BREAK_MIN_MINUTES &&
+           blob->break_minutes <= SETTINGS_BREAK_MAX_MINUTES;
 }
 
 static bool settings_blob_v2_is_migratable(const settings_blob_v2_t *blob, size_t length)
@@ -243,7 +312,7 @@ static bool settings_blob_v1_is_migratable(const settings_blob_v1_t *blob, size_
 static esp_err_t settings_store(nvs_handle_t handle,
                                 const xiaomiao_settings_t *settings)
 {
-    settings_blob_v3_t blob;
+    settings_blob_v4_t blob;
     settings_blob_encode(settings, &blob);
 
     esp_err_t err = nvs_set_blob(handle, SETTINGS_NVS_KEY, &blob, sizeof(blob));
@@ -280,16 +349,39 @@ static esp_err_t settings_install_defaults(nvs_handle_t handle,
 }
 
 /*
- * Load the snapshot from NVS, migrating a stored v1 entry and repairing
- * a missing or damaged one. Every failure path leaves a complete,
- * readable in-memory configuration behind; none of them aborts the
- * boot.
+ * Commit the merged in-memory snapshot after a migration decode. A
+ * failed write keeps the merged values in memory and marks the Service
+ * degraded; nothing is erased (goal 20261001-1449, "Configuration and
+ * migration").
+ */
+static esp_err_t settings_store_merged(nvs_handle_t handle)
+{
+    const esp_err_t err = settings_store(handle, &s_settings);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "storing migrated settings failed: %s (0x%x), continuing in memory",
+                 esp_err_to_name(err), (unsigned)err);
+        s_source = XIAOMIAO_SETTINGS_SOURCE_DEGRADED;
+        s_last_error = err;
+        return err;
+    }
+
+    s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
+    s_last_error = ESP_OK;
+    return ESP_OK;
+}
+
+/*
+ * Load the snapshot from NVS, migrating a stored v1/v2/v3 entry and
+ * repairing a missing or damaged one. Every failure path leaves a
+ * complete, readable in-memory configuration behind; none of them
+ * aborts the boot.
  */
 static esp_err_t settings_load(nvs_handle_t handle)
 {
-    /* All three layouts fit in the v3 buffer, so one read buffer serves
+    /* All four layouts fit in the v4 buffer, so one read buffer serves
      * every migration; the union keeps the aliasing explicit. */
     union {
+        settings_blob_v4_t v4;
         settings_blob_v3_t v3;
         settings_blob_v2_t v2;
         settings_blob_v1_t v1;
@@ -314,52 +406,42 @@ static esp_err_t settings_load(nvs_handle_t handle)
         return err;
     }
 
-    if (settings_blob_v3_is_valid(&blob.v3, length)) {
-        settings_blob_decode_v3(&blob.v3, &s_settings);
+    if (settings_blob_v4_is_valid(&blob.v4, length)) {
+        settings_blob_decode_v4(&blob.v4, &s_settings);
         s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
         s_last_error = ESP_OK;
         return ESP_OK;
+    }
+
+    if (settings_blob_v3_is_migratable(&blob.v3, length)) {
+        /* Schema upgrade from v3: keep every stored value, give the
+         * idle minutes their default and persist the result as v4 so
+         * the migration runs only once. */
+        settings_blob_decode_v3(&blob.v3, &s_settings);
+        ESP_LOGI(TAG, "migrating stored settings v3 -> v4 (idle_minutes=%u)",
+                 (unsigned)s_settings.screen_idle_minutes);
+        return settings_store_merged(handle);
     }
 
     if (settings_blob_v2_is_migratable(&blob.v2, length)) {
         /* Schema upgrade from v2: keep every stored value, give the
-         * new phase lengths their defaults and persist the result as
-         * v3 so the migration runs only once. */
+         * new fields their defaults and persist the result as v4 so
+         * the migration runs only once. */
         settings_blob_decode_v2(&blob.v2, &s_settings);
-        ESP_LOGI(TAG, "migrating stored settings v2 -> v3 (focus_minutes=%u, break_minutes=%u)",
+        ESP_LOGI(TAG, "migrating stored settings v2 -> v4 (focus_minutes=%u, break_minutes=%u)",
                  (unsigned)s_settings.focus_minutes,
                  (unsigned)s_settings.break_minutes);
-        err = settings_store(handle, &s_settings);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "storing migrated settings failed: %s (0x%x), continuing in memory",
-                     esp_err_to_name(err), (unsigned)err);
-            s_source = XIAOMIAO_SETTINGS_SOURCE_DEGRADED;
-            s_last_error = err;
-            return err;
-        }
-        s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
-        s_last_error = ESP_OK;
-        return ESP_OK;
+        return settings_store_merged(handle);
     }
 
     if (settings_blob_v1_is_migratable(&blob.v1, length)) {
         /* Schema upgrade from v1: keep both original values, give the
-         * new preferences their defaults and persist the result as v3
+         * new preferences their defaults and persist the result as v4
          * so the migration runs only once. */
         settings_blob_decode_v1(&blob.v1, &s_settings);
-        ESP_LOGI(TAG, "migrating stored settings v1 -> v3 (pomodoro_sound_enabled=%d)",
+        ESP_LOGI(TAG, "migrating stored settings v1 -> v4 (pomodoro_sound_enabled=%d)",
                  (int)s_settings.pomodoro_sound_enabled);
-        err = settings_store(handle, &s_settings);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "storing migrated settings failed: %s (0x%x), continuing in memory",
-                     esp_err_to_name(err), (unsigned)err);
-            s_source = XIAOMIAO_SETTINGS_SOURCE_DEGRADED;
-            s_last_error = err;
-            return err;
-        }
-        s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
-        s_last_error = ESP_OK;
-        return ESP_OK;
+        return settings_store_merged(handle);
     }
 
     /* Length, version or field range is wrong. The entry belongs to
@@ -417,12 +499,13 @@ esp_err_t xiaomiao_settings_service_init(void)
                  settings_source_name(s_source));
     }
     else {
-        ESP_LOGI(TAG, "settings service ready, source=%s (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u)",
+        ESP_LOGI(TAG, "settings service ready, source=%s (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u, screen_idle_minutes=%u)",
                  settings_source_name(s_source), (int)s_settings.wifi_auto_connect,
                  (int)s_settings.sound_enabled,
                  (int)s_settings.pomodoro_sound_enabled,
                  (unsigned)s_settings.focus_minutes,
-                 (unsigned)s_settings.break_minutes);
+                 (unsigned)s_settings.break_minutes,
+                 (unsigned)s_settings.screen_idle_minutes);
     }
 
     s_init_result = err;
@@ -487,10 +570,11 @@ esp_err_t xiaomiao_settings_set(const xiaomiao_settings_t *settings)
     s_settings = *settings;
     s_source = XIAOMIAO_SETTINGS_SOURCE_NVS;
     s_last_error = ESP_OK;
-    ESP_LOGI(TAG, "settings stored (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u)",
+    ESP_LOGI(TAG, "settings stored (wifi_auto_connect=%d, sound_enabled=%d, pomodoro_sound_enabled=%d, focus_minutes=%u, break_minutes=%u, screen_idle_minutes=%u)",
              (int)s_settings.wifi_auto_connect, (int)s_settings.sound_enabled,
              (int)s_settings.pomodoro_sound_enabled,
-             (unsigned)s_settings.focus_minutes, (unsigned)s_settings.break_minutes);
+             (unsigned)s_settings.focus_minutes, (unsigned)s_settings.break_minutes,
+             (unsigned)s_settings.screen_idle_minutes);
     return ESP_OK;
 }
 

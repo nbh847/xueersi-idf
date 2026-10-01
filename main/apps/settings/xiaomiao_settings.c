@@ -208,12 +208,32 @@ static const char TAG[] = "settings";
 #define SETTINGS_SWEEP_BAND_LONG     8
 #define SETTINGS_COLOR_SWEEP         0xE8F0FF
 
+/*
+ * Display pages (goal 20261001-1449). The Display menu keeps one row
+ * per future display option ("Screen idle" today); the idle minutes
+ * live on their own submenu so later rows fit without redesign.
+ * Candidate-page metrics follow the established small-font boxes
+ * (15/16 px rows, 14 px footer) so both font branches fit 160 x 128
+ * without clipping.
+ */
+#define SETTINGS_DISPLAY_ITEM_COUNT 1
+#define SETTINGS_DISPLAY_ITEM_IDLE  0
+#define SETTINGS_DISPLAY_ROW_COUNT  5
+#define SETTINGS_DISPLAY_ROW_X      4
+#define SETTINGS_DISPLAY_ROW_W      152
+#define SETTINGS_DISPLAY_ROW_Y0     18
+#define SETTINGS_DISPLAY_ROW_STEP   16
+#define SETTINGS_DISPLAY_ROW_H      15
+#define SETTINGS_DISPLAY_NOTE_Y     98
+#define SETTINGS_DISPLAY_NOTE_H     15
+
 typedef enum {
     SETTINGS_VIEW_MENU = 0,
     SETTINGS_VIEW_WIFI,
     SETTINGS_VIEW_WIFI_PROVISIONING,
     SETTINGS_VIEW_WIFI_DETAILS,
     SETTINGS_VIEW_DISPLAY,
+    SETTINGS_VIEW_DISPLAY_IDLE,
     SETTINGS_VIEW_SOUND,
     SETTINGS_VIEW_SYSTEM,
     SETTINGS_VIEW_SYSTEM_INFO,
@@ -268,6 +288,9 @@ static lv_obj_t *s_menu_items[SETTINGS_MENU_ITEM_COUNT];
 static lv_obj_t *s_system_items[SETTINGS_SYSTEM_ITEM_COUNT];
 static lv_obj_t *s_wifi_rows[SETTINGS_WIFI_ROW_COUNT];
 static lv_obj_t *s_wifi_detail_values[SETTINGS_WIFI_ROW_COUNT];
+static lv_obj_t *s_display_items[SETTINGS_DISPLAY_ITEM_COUNT];
+static lv_obj_t *s_display_rows[SETTINGS_DISPLAY_ROW_COUNT];
+static lv_obj_t *s_display_note;
 static lv_obj_t *s_wifi_message;
 static lv_obj_t *s_prov_line_ssid;
 static lv_obj_t *s_prov_line_password;
@@ -281,6 +304,9 @@ static settings_wifi_mode_t s_wifi_mode = SETTINGS_WIFI_LIST;
 static size_t s_menu_index;
 static size_t s_wifi_index;
 static size_t s_system_index;
+static size_t s_display_index;
+static size_t s_display_idle_index;
+static uint8_t s_display_minutes;
 static uint32_t s_wifi_refresh_ticks;
 static char s_wifi_message_text[SETTINGS_WIFI_MESSAGE_MAX];
 static bool s_b_latched;
@@ -948,6 +974,339 @@ static void settings_build_system(lv_obj_t *content)
 
 /*
  * ------------------------------------------------------------------
+ * Display pages (goal 20261001-1449)
+ * ------------------------------------------------------------------
+ * The Display menu keeps one row per display option so later entries
+ * (brightness, contrast, ...) can join without a redesign. Today there
+ * is exactly one: "Screen idle", whose submenu offers the idle minutes
+ * (Off / 1 / 2 / 5 / 10, 0 encodes Off), A saves through the Settings
+ * Service and B leaves without touching anything. The committed
+ * backlight fact stays as a note line; a failed save turns it into an
+ * error, rewinds the focus to the still-valid value and never shows a
+ * state the Service did not confirm.
+ */
+
+static const uint8_t s_display_candidates[SETTINGS_DISPLAY_ROW_COUNT] = {
+    0, 1, 2, 5, 10
+};
+
+static size_t settings_display_idle_index_of(uint8_t minutes)
+{
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ROW_COUNT; ++i) {
+        if (s_display_candidates[i] == minutes) {
+            return i;
+        }
+    }
+
+    /* The Service only serves valid values; the default is the safe
+     * fallback if one ever slips through. */
+    return 2;
+}
+
+static void settings_display_idle_row_text(uint8_t minutes, char *out,
+                                           size_t out_len)
+{
+    if (minutes == 0) {
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_OFF));
+        return;
+    }
+
+    snprintf(out, out_len, "%u %s", (unsigned)minutes,
+             xiaomiao_text(XM_TEXT_POMO_UNIT_MIN));
+}
+
+/* ---- Display menu (the option rows of the future live here) ---- */
+
+static void settings_display_menu_highlight(void)
+{
+    if (s_view != SETTINGS_VIEW_DISPLAY) {
+        return;
+    }
+
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ITEM_COUNT; ++i) {
+        lv_obj_t *row = s_display_items[i];
+        if (row == NULL) {
+            continue;
+        }
+
+        const bool focused = (i == s_display_index);
+        lv_obj_set_style_bg_color(row,
+                                  lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BG
+                                                       : SETTINGS_COLOR_ROW_BG),
+                                  0);
+        lv_obj_set_style_border_color(row,
+                                      lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BORDER
+                                                           : SETTINGS_COLOR_ROW_BORDER),
+                                      0);
+        lv_obj_set_style_border_width(row, focused ? 2 : 1, 0);
+
+        /* Child 1 is the current-value label; it must stay readable on
+         * the blue focus background. */
+        lv_obj_t *value = lv_obj_get_child(row, 1);
+        if (value != NULL) {
+            lv_obj_set_style_text_color(value,
+                                        lv_color_hex(focused ? SETTINGS_COLOR_TITLE
+                                                             : SETTINGS_COLOR_MUTED),
+                                        0);
+        }
+    }
+}
+
+static void settings_build_display(lv_obj_t *content)
+{
+    xiaomiao_settings_t settings;
+    memset(&settings, 0, sizeof(settings));
+    s_display_minutes = (xiaomiao_settings_get(&settings) == ESP_OK)
+                            ? settings.screen_idle_minutes
+                            : 2;
+
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_SETTINGS_DISPLAY));
+
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ITEM_COUNT; ++i) {
+        const int32_t y = SETTINGS_MENU_Y0 + (int32_t)i * SETTINGS_MENU_STEP;
+
+        lv_obj_t *row = lv_obj_create(content);
+        if (row == NULL) {
+            ESP_LOGW(TAG, "display row allocation failed");
+            continue;
+        }
+        lv_obj_remove_style_all(row);
+        lv_obj_set_pos(row, SETTINGS_MENU_X, y);
+        lv_obj_set_size(row, SETTINGS_MENU_W, SETTINGS_MENU_H);
+        lv_obj_set_style_radius(row, 3, 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        /* Decoration only: the root below stays the single focus object. */
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t *label = settings_create_label(row,
+                                                xiaomiao_text(XM_TEXT_SETTINGS_SCREEN_IDLE),
+                                                xiaomiao_font_small(),
+                                                SETTINGS_COLOR_TITLE,
+                                                LV_LABEL_LONG_MODE_DOTS);
+        if (label != NULL) {
+            lv_obj_set_size(label, 70, 16);
+            lv_obj_align(label, LV_ALIGN_LEFT_MID, 8, 0);
+        }
+
+        char text[16];
+        settings_display_idle_row_text(s_display_minutes, text, sizeof(text));
+        lv_obj_t *value = settings_create_label(row, text, xiaomiao_font_small(),
+                                                SETTINGS_COLOR_MUTED,
+                                                LV_LABEL_LONG_MODE_DOTS);
+        if (value != NULL) {
+            lv_obj_set_size(value, 56, 16);
+            lv_obj_align(value, LV_ALIGN_RIGHT_MID, -8, 0);
+            lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+        }
+
+        s_display_items[i] = row;
+    }
+
+    settings_display_menu_highlight();
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_A_SELECT_B_BACK));
+}
+
+static void settings_display_menu_move(int step)
+{
+    if (step < 0) {
+        if (s_display_index == 0) {
+            return;
+        }
+        s_display_index--;
+    }
+    else {
+        if (s_display_index + 1 >= SETTINGS_DISPLAY_ITEM_COUNT) {
+            return;
+        }
+        s_display_index++;
+    }
+
+    settings_display_menu_highlight();
+    /* Down move: the old row was above, so the band enters at the top. */
+    settings_band_start(s_display_items[s_display_index], step > 0,
+                        SETTINGS_MENU_H);
+}
+
+static void settings_display_menu_activate(void)
+{
+    switch (s_display_index) {
+    case SETTINGS_DISPLAY_ITEM_IDLE:
+        settings_show_view(SETTINGS_VIEW_DISPLAY_IDLE);
+        break;
+    default:
+        break;
+    }
+}
+
+/* ---- Screen idle submenu (the idle minutes) ---- */
+
+static void settings_display_idle_highlight(void)
+{
+    if (s_view != SETTINGS_VIEW_DISPLAY_IDLE) {
+        return;
+    }
+
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ROW_COUNT; ++i) {
+        lv_obj_t *row = s_display_rows[i];
+        if (row == NULL) {
+            continue;
+        }
+
+        const bool focused = (i == s_display_idle_index);
+        const bool committed = (s_display_candidates[i] == s_display_minutes);
+        lv_obj_set_style_bg_color(row,
+                                  lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BG
+                                                       : SETTINGS_COLOR_ROW_BG),
+                                  0);
+        lv_obj_set_style_border_color(row,
+                                      lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BORDER
+                                                           : SETTINGS_COLOR_ROW_BORDER),
+                                      0);
+        lv_obj_set_style_border_width(row, focused ? 2 : 1, 0);
+
+        lv_obj_t *label = lv_obj_get_child(row, 0);
+        if (label != NULL) {
+            /* The focused row sits on the blue focus background, so its
+             * text is always bright; unfocused rows only light up when
+             * they carry the committed value. */
+            lv_obj_set_style_text_color(label,
+                                        lv_color_hex((focused || committed)
+                                                         ? SETTINGS_COLOR_TITLE
+                                                         : SETTINGS_COLOR_MUTED),
+                                        0);
+        }
+    }
+}
+
+/* The message line carries a temporary save error in the warning
+ * colour; it is empty while everything is fine. */
+static void settings_display_idle_note(const char *text, uint32_t color)
+{
+    if (s_display_note == NULL) {
+        return;
+    }
+
+    lv_label_set_text(s_display_note, text);
+    lv_obj_set_style_text_color(s_display_note, lv_color_hex(color), 0);
+}
+
+static void settings_build_display_idle(lv_obj_t *content)
+{
+    xiaomiao_settings_t settings;
+    memset(&settings, 0, sizeof(settings));
+    s_display_minutes = (xiaomiao_settings_get(&settings) == ESP_OK)
+                            ? settings.screen_idle_minutes
+                            : 2;
+    s_display_idle_index = settings_display_idle_index_of(s_display_minutes);
+
+    settings_create_page_title(content,
+                               xiaomiao_text(XM_TEXT_SETTINGS_SCREEN_IDLE));
+
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ROW_COUNT; ++i) {
+        const int32_t y = SETTINGS_DISPLAY_ROW_Y0 +
+                          (int32_t)i * SETTINGS_DISPLAY_ROW_STEP;
+
+        lv_obj_t *row = lv_obj_create(content);
+        if (row == NULL) {
+            ESP_LOGW(TAG, "display row allocation failed");
+            continue;
+        }
+        lv_obj_remove_style_all(row);
+        lv_obj_set_pos(row, SETTINGS_DISPLAY_ROW_X, y);
+        lv_obj_set_size(row, SETTINGS_DISPLAY_ROW_W, SETTINGS_DISPLAY_ROW_H);
+        lv_obj_set_style_radius(row, 3, 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        /* Decoration only: the root below stays the single focus object. */
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+
+        char text[16];
+        settings_display_idle_row_text(s_display_candidates[i], text, sizeof(text));
+        lv_obj_t *label = settings_create_label(row, text, xiaomiao_font_small(),
+                                                SETTINGS_COLOR_MUTED,
+                                                LV_LABEL_LONG_MODE_DOTS);
+        if (label != NULL) {
+            lv_obj_set_size(label, SETTINGS_DISPLAY_ROW_W - 16, 14);
+            lv_obj_align(label, LV_ALIGN_LEFT_MID, 8, 0);
+        }
+
+        s_display_rows[i] = row;
+    }
+
+    /* The message line stays empty until a save fails: the error is
+     * shown without ever displaying a state the Service did not
+     * confirm. */
+    s_display_note = settings_place_label(content, "",
+                                          xiaomiao_font_small(), SETTINGS_COLOR_WARN,
+                                          0, SETTINGS_DISPLAY_NOTE_Y,
+                                          SETTINGS_SCREEN_W,
+                                          SETTINGS_DISPLAY_NOTE_H,
+                                          LV_TEXT_ALIGN_CENTER);
+    /* The standard footer slot is taken by the note line, so the hint
+     * moves to the last 14 px of the screen. */
+    settings_place_label(content, xiaomiao_text(XM_TEXT_HINT_A_SAVE_B_BACK),
+                         xiaomiao_font_small(), SETTINGS_COLOR_MUTED,
+                         0, 113, SETTINGS_SCREEN_W, SETTINGS_FOOTER_H,
+                         LV_TEXT_ALIGN_CENTER);
+    settings_display_idle_highlight();
+}
+
+static void settings_display_idle_move(int step)
+{
+    if (step < 0) {
+        if (s_display_idle_index == 0) {
+            return;
+        }
+        s_display_idle_index--;
+    }
+    else {
+        if (s_display_idle_index + 1 >= SETTINGS_DISPLAY_ROW_COUNT) {
+            return;
+        }
+        s_display_idle_index++;
+    }
+
+    settings_display_idle_highlight();
+    /* Down move: the old row was above, so the band enters at the top. */
+    settings_band_start(s_display_rows[s_display_idle_index], step > 0,
+                        SETTINGS_DISPLAY_ROW_H);
+}
+
+/* A saves the highlighted candidate; the UI only moves to it after the
+ * Service confirmed the write (goal node 9, decision 6 semantics). */
+static void settings_display_idle_activate(void)
+{
+    const uint8_t target = s_display_candidates[s_display_idle_index];
+
+    xiaomiao_settings_t settings;
+    memset(&settings, 0, sizeof(settings));
+    if (xiaomiao_settings_get(&settings) != ESP_OK) {
+        settings_display_idle_note(xiaomiao_text(XM_TEXT_SETTINGS_SETTINGS_UNAVAILABLE),
+                                   SETTINGS_COLOR_WARN);
+        return;
+    }
+
+    const uint8_t previous = settings.screen_idle_minutes;
+    settings.screen_idle_minutes = target;
+    if (xiaomiao_settings_set(&settings) != ESP_OK) {
+        /* Flash and the runtime value keep the old setting: rewind the
+         * focus to it and say so. */
+        s_display_minutes = previous;
+        s_display_idle_index = settings_display_idle_index_of(s_display_minutes);
+        settings_display_idle_highlight();
+        settings_display_idle_note(xiaomiao_text(XM_TEXT_SETTINGS_MSG_SAVE_FAILED),
+                                   SETTINGS_COLOR_WARN);
+        return;
+    }
+
+    s_display_minutes = target;
+    settings_display_idle_highlight();
+    settings_display_idle_note("", SETTINGS_COLOR_WARN);
+}
+
+/*
+ * ------------------------------------------------------------------
  * Wi-Fi page (goal node 10, checkpoint 4)
  * ------------------------------------------------------------------
  * Status, automatic connection, configuration and forgetting. The page
@@ -1280,6 +1639,13 @@ static void settings_show_view(settings_view_t view)
         s_wifi_rows[i] = NULL;
         s_wifi_detail_values[i] = NULL;
     }
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ITEM_COUNT; ++i) {
+        s_display_items[i] = NULL;
+    }
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ROW_COUNT; ++i) {
+        s_display_rows[i] = NULL;
+    }
+    s_display_note = NULL;
     s_wifi_message = NULL;
     s_prov_line_ssid = NULL;
     s_prov_line_password = NULL;
@@ -1304,13 +1670,14 @@ static void settings_show_view(settings_view_t view)
         settings_build_wifi_details(s_content);
         break;
     case SETTINGS_VIEW_DISPLAY:
-        /* Hardware fact, not a missing setting: the backlight is wired
-         * to VCC, so there is no brightness to store or restore. */
-        settings_build_detail(s_content, xiaomiao_text(XM_TEXT_SETTINGS_DISPLAY),
-                              xiaomiao_text(XM_TEXT_SETTINGS_BRIGHTNESS_FIXED),
-                              xiaomiao_text(XM_TEXT_SETTINGS_BACKLIGHT_VCC),
-                              SETTINGS_COLOR_TEXT,
-                              xiaomiao_text(XM_TEXT_SETTINGS_NO_DISPLAY));
+        /* The Display menu: one row per display option, "Screen idle"
+         * today (goal 20261001-1449). The fixed-backlight fact stays on
+         * the page as a note line. */
+        settings_build_display(s_content);
+        break;
+    case SETTINGS_VIEW_DISPLAY_IDLE:
+        /* The idle minutes submenu (goal 20261001-1449). */
+        settings_build_display_idle(s_content);
         break;
     case SETTINGS_VIEW_SOUND:
         settings_build_detail(s_content, xiaomiao_text(XM_TEXT_SETTINGS_SOUND),
@@ -1588,6 +1955,12 @@ static void settings_handle_escape(void)
         return;
     }
 
+    if (s_view == SETTINGS_VIEW_DISPLAY_IDLE) {
+        /* Back to the Display menu, which keeps its row focus. */
+        settings_show_view(SETTINGS_VIEW_DISPLAY);
+        return;
+    }
+
     if (s_view == SETTINGS_VIEW_SYSTEM_INFO ||
         s_view == SETTINGS_VIEW_ASSETS ||
         s_view == SETTINGS_VIEW_CONFIG ||
@@ -1625,6 +1998,43 @@ static void settings_key_cb(lv_event_t *event)
         /* The provisioning page only answers to B. */
         if (key == LV_KEY_ESC) {
             settings_handle_escape();
+        }
+        return;
+    case SETTINGS_VIEW_DISPLAY:
+        switch (key) {
+        case LV_KEY_UP:
+            settings_display_menu_move(-1);
+            break;
+        case LV_KEY_DOWN:
+            settings_display_menu_move(1);
+            break;
+        case LV_KEY_ENTER:
+            settings_display_menu_activate();
+            break;
+        case LV_KEY_ESC:
+            settings_handle_escape();
+            break;
+        default:
+            break;
+        }
+        return;
+    case SETTINGS_VIEW_DISPLAY_IDLE:
+        switch (key) {
+        case LV_KEY_UP:
+            settings_display_idle_move(-1);
+            break;
+        case LV_KEY_DOWN:
+            settings_display_idle_move(1);
+            break;
+        case LV_KEY_ENTER:
+            settings_display_idle_activate();
+            break;
+        case LV_KEY_ESC:
+            settings_handle_escape();
+            break;
+        default:
+            /* Left and right have no meaning in a single-column list. */
+            break;
         }
         return;
     case SETTINGS_VIEW_MENU:
@@ -1900,6 +2310,9 @@ static void settings_open(void)
     s_menu_index = 0;
     s_wifi_index = 0;
     s_system_index = 0;
+    s_display_index = 0;
+    s_display_idle_index = 0;
+    s_display_minutes = 0;
     s_wifi_mode = SETTINGS_WIFI_LIST;
     s_wifi_refresh_ticks = 0;
     settings_set_wifi_message("");
@@ -1945,6 +2358,13 @@ static void settings_close(void)
         s_wifi_rows[i] = NULL;
         s_wifi_detail_values[i] = NULL;
     }
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ITEM_COUNT; ++i) {
+        s_display_items[i] = NULL;
+    }
+    for (size_t i = 0; i < SETTINGS_DISPLAY_ROW_COUNT; ++i) {
+        s_display_rows[i] = NULL;
+    }
+    s_display_note = NULL;
     s_wifi_message = NULL;
     s_prov_line_ssid = NULL;
     s_prov_line_password = NULL;
@@ -1957,6 +2377,9 @@ static void settings_close(void)
     s_menu_index = 0;
     s_wifi_index = 0;
     s_system_index = 0;
+    s_display_index = 0;
+    s_display_idle_index = 0;
+    s_display_minutes = 0;
     s_wifi_mode = SETTINGS_WIFI_LIST;
     s_wifi_refresh_ticks = 0;
     s_b_latched = false;

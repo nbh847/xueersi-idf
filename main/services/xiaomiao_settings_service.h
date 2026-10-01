@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 /*
- * Business fields of the current schema version (v3). Field ranges
+ * Business fields of the current schema version (v4). Field ranges
  * need no runtime check on the way in, so a NULL pointer is the only
  * invalid input a caller can hand to xiaomiao_settings_set(); the NVS
  * side still validates every stored field.
@@ -37,9 +37,11 @@ extern "C" {
  * wifi_auto_connect is consumed by the Wi-Fi Service, sound_enabled by
  * node 12, pomodoro_sound_enabled by the Tools Pomodoro reminder, and
  * focus_minutes / break_minutes (1..180 / 1..60) are the Tools
- * Pomodoro phase lengths. Legacy blobs are migrated in place: every
- * field of the older schema keeps its value and the new fields get
- * their defaults.
+ * Pomodoro phase lengths. screen_idle_minutes is the UI idle time in
+ * minutes, 0 disabling the idle screen and 1/2/5/10 arming it (goal
+ * 20261001-1449); the Screen Idle module consumes it. Legacy blobs are
+ * migrated in place: every field of the older schema keeps its value
+ * and the new fields get their defaults.
  */
 typedef struct {
     bool wifi_auto_connect;
@@ -47,6 +49,7 @@ typedef struct {
     bool pomodoro_sound_enabled;
     uint8_t focus_minutes;
     uint8_t break_minutes;
+    uint8_t screen_idle_minutes;
 } xiaomiao_settings_t;
 
 /*

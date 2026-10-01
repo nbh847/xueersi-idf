@@ -10,7 +10,7 @@
 - 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标，番茄时钟 Goal 新增其可见性接口），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照；AI 额度 Goal 把该 App 扩为 4 页并让 Agent Service 提供两个服务商的额度快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端，番茄时钟 Goal 的 `Pomodoro Service` 与 `Buzzer Service`——后者是 GPIO14／LEDC 蜂鸣器通道的唯一所有者；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client`、cJSON 或 LEDC），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，未实现 I2C `0x40` 从机协议；但项目负责人于 2026-09-27 报告 Hardware Test 可在实机控制 LED1／LED2，表明板上控制链路可用，实际 GD32 固件与仓库源码的对应关系待查。
-- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 已作为番茄到点提醒的总开关生效，Settings 的 Sound 页仍只读；`pomodoro_sound_enabled` 与 `focus_minutes`／`break_minutes`（schema v3，含 v1／v2 原位迁移）由番茄时钟提醒与阶段时长消费，已实机验收。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，状态行可进入连接详情（状态、SSID、信号、IPv4，实时快照）；System 为系统信息、资源状态（SD 已挂载时显示容量 MB）、配置状态、关于四项子菜单。Tools 经信息归位改为单入口页，2026-10-01 番茄时钟 Goal 实施并验收后显示唯一「番茄时钟」入口（正圆计时页与番茄设置）；原有 Wi-Fi、System Info、Assets、About 已全部迁入 Settings。
+- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 已作为番茄到点提醒的总开关生效，Settings 的 Sound 页仍只读；`pomodoro_sound_enabled` 与 `focus_minutes`／`break_minutes`（schema v3，含 v1／v2 原位迁移）由番茄时钟提醒与阶段时长消费，已实机验收。schema v4（2026-10-01，空闲待机 Goal）新增 `screen_idle_minutes`，由 Screen Idle 模块消费，**未实机验证**；Settings 的 Display 页已从只读改为菜单式，「息屏设置」子页提供待机时长五候选（待人工验收）。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，状态行可进入连接详情（状态、SSID、信号、IPv4，实时快照）；System 为系统信息、资源状态（SD 已挂载时显示容量 MB）、配置状态、关于四项子菜单。Tools 经信息归位改为单入口页，2026-10-01 番茄时钟 Goal 实施并验收后显示唯一「番茄时钟」入口（正圆计时页与番茄设置）；原有 Wi-Fi、System Info、Assets、About 已全部迁入 Settings。
 
 ## 当前开发节点
 
@@ -39,7 +39,8 @@
 
 - **监控 App 智谱与 Codex 额度已于 2026-09-27 完成并取得人工验收确认**（设计 `docs/monitor-ai-quota-design.md`；施工 `goals/20260927-1855-monitor-ai-quotas.md`）。PC Agent 新增两个只读额度端点（`/api/v1/quotas/codex`、`/api/v1/quotas/zhipu`，健康端点能力列表同步），固件 Agent Service 新增共享发现链路、额度快照与独立低频 Worker（180 秒过期，与 PC 指标的 1 秒轮询／3 秒失效互不影响），监控 App 扩为四页（第 3 页智谱 `5H`／`1W`、第 4 页 Codex `5H`／`7D`）并把 Launcher 显示名改为「监控」／`Monitor`，i18n 增至 217 个文案 ID。软件侧验证：102 项 Python 用例（含只读缓存、响应无凭据、失败后恢复、同一时间采样四条口径）、本机 HTTP 冒烟两个端点 `status=ok`、倒计时边界宿主编译核对、字库覆盖与静态检查。实机验收：第一轮照片确认第 4 页 Codex 显示正确，同时暴露三处缺陷——`RAM` 被截成 `RA`（28 px 名称框装不下 Montserrat 12 的 ≈27.8 px，折行第二行被裁）、额度页状态文字与右上 Wi-Fi 图标重合（状态框右边界到 156，图标占 140..158）、四页标题底部被裁（标题框 14 px 小于 16 px 档字体的 19 px 行高，折行后裁切）；已分别改为每项指标一个 78 px 单标签（`名称 数值 单位`）并 `CLIP`、状态右边界收到 136、标题框加高到 20 px。项目负责人于 2026-09-27 复测后确认「功能没问题，都验证过了」。证据类型：人工确认，第一轮附实机照片，最终确认与第二轮反馈未附串口日志。
 
-- **待审设计：空闲待机画面**（`docs/screen-idle-design.md`）。默认 2 分钟无按键进入黑底静态小电视画面，设置页可调时间，任意键唤醒并保留原页面；背光直连 VCC，无法物理熄灭或保证省电。文档待负责人审阅，固件尚未实施或验证。
+- **已完成：空闲待机与动态小电视**。2026-10-01 16:22 负责人确认构建、烧录及待机实机测试全部通过（口头确认，未附新日志或照片）。默认 2 分钟；Settings → Display → 息屏设置可选关闭／1／2／5／10 分钟，schema v4 保值迁移 v1／v2／v3；六键唤醒并吞键至全部释放，原页面、焦点和后台服务保留。单圈浅白小电视约 104 × 90 px 居中，50 ms timer 推进眨眼、天线抬落与小嘴动作。接手重新编译真实源码的状态机及配置迁移 10 步宿主检查均 PASS（ASan／UBSan 无报错）；独立自测固件、量化内存与失败注入没有新增实机证据。详情见 `goals/20261001-1449-screen-idle.md`；设计与预览见 `docs/screen-idle-design.md`、`docs/screen-idle-preview.html`。背光仍常亮。
+
 
 - **暂缓：Launcher 电池电量显示**（`docs/battery-indicator-design.md`；记录 `goals/20261001-1206-battery-indicator-design.md`）。2026-10-01 用户决定暂不开发，左上角保留 `Xiaomiao`，不替换为电量或未知占位。原理图与源码未发现已确认的电池读取通道，实板未验证；保留调研与候选方案，恢复开发需用户重新明确要求。
 
@@ -83,11 +84,11 @@
 
 ## 下一步
 
-三项 UI 工作的实施顺序已由项目负责人确认：**Launcher 顺序与 Tools／Settings 信息归位 → Tools 番茄时钟 → 空闲待机画面**。每步独立实施并完成人工验收后再进入下一步；信息归位与番茄时钟均已完成并验收（2026-10-01），空闲待机画面仍待审、未实施。
+三项 UI 工作的实施顺序已由项目负责人确认：**Launcher 顺序与 Tools／Settings 信息归位 → Tools 番茄时钟 → 空闲待机画面**。每步独立实施并完成人工验收后再进入下一步；信息归位与番茄时钟均已完成并验收（2026-10-01），空闲待机也已于 2026-10-01 16:22 根据负责人全部通过确认收口。
 
 - ~~信息归位~~：**已完成并验收（2026-10-01）**，入口与页面结构稳定；其时 Tools 为「暂无工具」过渡页，已被随后的番茄时钟实施取代；记录见上方已完成条目。设计见 `docs/launcher-tools-settings-reorganization-design.md`。
 - ~~番茄时钟~~：**已完成并验收（2026-10-01 13:30）**。专注到点自动进入休息、休息完成「再来一轮」、时长编辑（schema v3）、到点声音两级开关、光带特效；负责人口头确认通过，未附串口日志或照片，Settings 自测固件未单独运行。记录见上方已完成条目与施工文档「实施记录」。
-- 空闲待机画面：最后接入全局输入与覆盖层；验收待机期间番茄计时继续、六键唤醒并吞掉唤醒键、页面与焦点恢复、长按 B 不误触发及全 App 回归。设计见 `docs/screen-idle-design.md`。
+- ~~空闲待机画面~~：**已完成并验收（2026-10-01 16:22）**，三项 UI 工作均已收口。交付与证据边界见 `goals/20261001-1449-screen-idle.md`。
 
 1. 节点 16 先取得板载 GD32 固件来源或可核对的固件读取结果，查明其与仓库源码的差异，再补齐 `0x40` 处理；电机协议按 README 与 ESP32 发送格式核对实现。电机未接入，实机动作保持未验证；MPU6050 实机行为另行标记为未验证。
 2. 节点 16（GD32 `0x40` 协议源码补齐与实机差异核对）可按计划继续；节点 12（Audio Service）与节点 13（首个正式游戏）继续推迟。节点 15 与配网回归均已收口，证据分别见节点 15 总纲和 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。

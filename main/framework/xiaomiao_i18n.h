@@ -315,6 +315,14 @@ typedef enum {
     XM_TEXT_POMO_LABEL_BREAK_LEN,
     XM_TEXT_POMO_UNIT_MIN,
 
+    /* Screen idle Display page (goal 20261001-1449). The Display menu
+     * carries the "Screen idle" entry so later display options get
+     * their own rows; the minute values themselves are formatted
+     * ("2 min" via XM_TEXT_POMO_UNIT_MIN) and the off entry reuses
+     * XM_TEXT_STATE_OFF. */
+    XM_TEXT_HINT_A_SAVE_B_BACK,
+    XM_TEXT_SETTINGS_SCREEN_IDLE,
+
     XM_TEXT_COUNT
 } xiaomiao_text_id_t;
 

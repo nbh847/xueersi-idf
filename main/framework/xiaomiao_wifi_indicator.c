@@ -247,6 +247,11 @@ void xiaomiao_wifi_indicator_set_visible(bool visible)
     }
 }
 
+bool xiaomiao_wifi_indicator_is_visible(void)
+{
+    return s_visible;
+}
+
 esp_err_t xiaomiao_wifi_indicator_create(void)
 {
     if (s_root != NULL) {

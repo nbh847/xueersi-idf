@@ -1,24 +1,28 @@
 /*
- * Settings Service self test (goal node 9, checkpoint 2; schema v3 and
- * the v1/v2 migrations added by goal 20261001-1036).
+ * Settings Service self test (goal node 9, checkpoint 2; schema v4 and
+ * the v1/v2/v3 migrations, goal 20261001-1449).
  *
  * Covers the constructible recovery paths of the Service:
  *   step 1  key missing            -> defaults installed and persisted
  *           plus the argument checks, init() idempotency and a
  *           non-default write verified through the raw stored bytes
- *   step 2  valid v3 blob          -> loaded from NVS after a real
+ *   step 2  valid v4 blob          -> loaded from NVS after a real
  *                                     restart (the non-default values
  *                                     written in step 1 come back)
  *   step 3  valid v1 blob          -> migrated in place: both original
  *                                     values survive, the new fields
  *                                     get their defaults and the entry
- *                                     is rewritten as v3
+ *                                     is rewritten as v4
  *   step 4  valid v2 blob          -> migrated the same way, keeping
  *                                     its three booleans
- *   step 5  unknown schema version -> defaults restored, this key repaired
- *   step 6  out-of-range minutes   -> defaults restored
- *   step 7  blob shorter than v3   -> defaults restored
- *   step 8  blob longer than v3    -> NVS rejects the read, the Service
+ *   step 5  valid v3 blob          -> migrated the same way, keeping
+ *                                     the five v3 fields
+ *   step 6  unknown schema version -> defaults restored, this key repaired
+ *   step 7  out-of-range minutes   -> defaults restored
+ *   step 8  invalid idle minutes   -> defaults restored (not a menu
+ *                                     candidate)
+ *   step 9  blob shorter than v4   -> defaults restored
+ *   step 10 blob longer than v4    -> NVS rejects the read, the Service
  *                                     degrades and keeps the defaults
  *                                     readable, then the namespace is
  *                                     restored to a clean state
@@ -60,9 +64,9 @@ static const char TAG[] = "settings_selftest";
 #define SELFTEST_NAMESPACE  "xiaomiao"
 #define SELFTEST_KEY        "settings"
 #define SELFTEST_STAGE_KEY  "selftest_stage"
-#define SELFTEST_VERSION    3
-#define SELFTEST_PAYLOAD    5
-#define SELFTEST_STEP_COUNT 8
+#define SELFTEST_VERSION    4
+#define SELFTEST_PAYLOAD    6
+#define SELFTEST_STEP_COUNT 10
 
 /*
  * Independent mirrors of the documented layouts. They are declared here
@@ -70,6 +74,17 @@ static const char TAG[] = "settings_selftest";
  * test breaks if an on-Flash layout ever changes without a schema
  * version bump.
  */
+typedef struct {
+    uint16_t schema_version;
+    uint16_t payload_size;
+    uint8_t wifi_auto_connect;
+    uint8_t sound_enabled;
+    uint8_t pomodoro_sound_enabled;
+    uint8_t focus_minutes;
+    uint8_t break_minutes;
+    uint8_t screen_idle_minutes;
+} selftest_blob_v4_t;
+
 typedef struct {
     uint16_t schema_version;
     uint16_t payload_size;
@@ -98,6 +113,7 @@ typedef struct {
     uint8_t reserved[2];
 } selftest_blob_v1_t;
 
+_Static_assert(sizeof(selftest_blob_v4_t) == 10, "v4 mirror must stay 10 bytes");
 _Static_assert(sizeof(selftest_blob_v3_t) == 10, "v3 mirror must stay 10 bytes");
 _Static_assert(sizeof(selftest_blob_v2_t) == 8, "v2 mirror must stay 8 bytes");
 _Static_assert(sizeof(selftest_blob_v1_t) == 8, "v1 mirror must stay 8 bytes");
@@ -213,22 +229,23 @@ static void selftest_expect_marker(uint32_t expected)
                    "repair left the other namespace keys alone");
 }
 
-/* Read the stored blob and assert it is a valid, normalised v3 blob. */
+/* Read the stored blob and assert it is a valid, normalised v4 blob. */
 static void selftest_expect_valid_blob(uint8_t expected_wifi,
                                        uint8_t expected_sound,
                                        uint8_t expected_pomodoro,
                                        uint8_t expected_focus,
-                                       uint8_t expected_break)
+                                       uint8_t expected_break,
+                                       uint8_t expected_idle)
 {
-    selftest_blob_v3_t blob;
+    selftest_blob_v4_t blob;
     memset(&blob, 0, sizeof(blob));
     size_t length = sizeof(blob);
 
     esp_err_t err = selftest_read_raw(&blob, &length);
     SELFTEST_CHECK(err == ESP_OK, "read back stored blob");
-    SELFTEST_CHECK(length == sizeof(blob), "stored blob has the v3 length");
-    SELFTEST_CHECK(blob.schema_version == SELFTEST_VERSION, "stored version is 3");
-    SELFTEST_CHECK(blob.payload_size == SELFTEST_PAYLOAD, "stored payload size is 5");
+    SELFTEST_CHECK(length == sizeof(blob), "stored blob has the v4 length");
+    SELFTEST_CHECK(blob.schema_version == SELFTEST_VERSION, "stored version is 4");
+    SELFTEST_CHECK(blob.payload_size == SELFTEST_PAYLOAD, "stored payload size is 6");
     SELFTEST_CHECK(blob.wifi_auto_connect == expected_wifi,
                    "stored wifi_auto_connect matches");
     SELFTEST_CHECK(blob.sound_enabled == expected_sound, "stored sound_enabled matches");
@@ -238,7 +255,8 @@ static void selftest_expect_valid_blob(uint8_t expected_wifi,
                    "stored focus_minutes matches");
     SELFTEST_CHECK(blob.break_minutes == expected_break,
                    "stored break_minutes matches");
-    SELFTEST_CHECK(blob.reserved == 0, "reserved byte is zeroed");
+    SELFTEST_CHECK(blob.screen_idle_minutes == expected_idle,
+                   "stored screen_idle_minutes matches");
 }
 
 /* Assert the loaded snapshot and the reported source after init(). */
@@ -246,6 +264,7 @@ static void selftest_expect_loaded(xiaomiao_settings_source_t expected_source,
                                    bool expected_wifi, bool expected_sound,
                                    bool expected_pomodoro,
                                    uint8_t expected_focus, uint8_t expected_break,
+                                   uint8_t expected_idle,
                                    const char *what)
 {
     esp_err_t err = xiaomiao_settings_service_init();
@@ -267,6 +286,8 @@ static void selftest_expect_loaded(xiaomiao_settings_source_t expected_source,
                    "loaded focus_minutes matches");
     SELFTEST_CHECK(snapshot.break_minutes == expected_break,
                    "loaded break_minutes matches");
+    SELFTEST_CHECK(snapshot.screen_idle_minutes == expected_idle,
+                   "loaded screen_idle_minutes matches");
 }
 
 static void selftest_step_defaults(void)
@@ -289,7 +310,7 @@ static void selftest_step_defaults(void)
     SELFTEST_CHECK(selftest_erase_key(SELFTEST_KEY) == ESP_OK,
                    "clear the stored settings key");
 
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_DEFAULTS, true, true, true, 25, 5,
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_DEFAULTS, true, true, true, 25, 5, 2,
                            "init on a missing key succeeds");
     SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK,
                    "a first install is not an error");
@@ -300,7 +321,7 @@ static void selftest_step_defaults(void)
     SELFTEST_CHECK(xiaomiao_settings_source() == XIAOMIAO_SETTINGS_SOURCE_DEFAULTS,
                    "a repeated init keeps the source");
 
-    selftest_expect_valid_blob(1, 1, 1, 25, 5);
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
 
     /* Non-default write; the persisted bytes are what the next boot has
      * to recover. */
@@ -310,6 +331,7 @@ static void selftest_step_defaults(void)
         .pomodoro_sound_enabled = false,
         .focus_minutes = 7,
         .break_minutes = 2,
+        .screen_idle_minutes = 10,
     };
     SELFTEST_CHECK(xiaomiao_settings_set(&changed) == ESP_OK,
                    "store a non-default configuration");
@@ -318,12 +340,13 @@ static void selftest_step_defaults(void)
     SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK,
                    "a committed write clears the error");
 
-    selftest_expect_valid_blob(0, 0, 0, 7, 2);
+    selftest_expect_valid_blob(0, 0, 0, 7, 2, 10);
 
     SELFTEST_CHECK(xiaomiao_settings_get(&snapshot) == ESP_OK, "get after write");
     SELFTEST_CHECK(!snapshot.wifi_auto_connect && !snapshot.sound_enabled &&
                    !snapshot.pomodoro_sound_enabled &&
-                   snapshot.focus_minutes == 7 && snapshot.break_minutes == 2,
+                   snapshot.focus_minutes == 7 && snapshot.break_minutes == 2 &&
+                   snapshot.screen_idle_minutes == 10,
                    "the snapshot follows the committed write");
 }
 
@@ -331,13 +354,13 @@ static void selftest_step_load_from_nvs(void)
 {
     /* A real restart happened between step 1 and this call, so a
      * non-default configuration coming back proves reboot recovery. */
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, false, false, false, 7, 2,
-                           "init on a valid v3 blob succeeds");
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, false, false, false, 7, 2, 10,
+                           "init on a valid v4 blob succeeds");
     SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK, "a valid load is clean");
 
     /* Inject a valid legacy v1 entry: the values differ from what is
      * stored now, so step 3 can prove the migration read this blob and
-     * not the previous v3 one. */
+     * not the previous v4 one. */
     selftest_blob_v1_t v1;
     memset(&v1, 0, sizeof(v1));
     v1.schema_version = 1;
@@ -352,13 +375,13 @@ static void selftest_step_v1_migration(void)
 {
     /* Both v1 values survive, the new fields start at their defaults
      * and the entry is reported as loaded (not repaired). */
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, true, true, true, 25, 5,
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, true, true, true, 25, 5, 2,
                            "a valid v1 blob migrates in place");
     SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK,
                    "a migration is not an error");
 
-    /* The migration rewrote the entry as a valid v3 blob. */
-    selftest_expect_valid_blob(1, 1, 1, 25, 5);
+    /* The migration rewrote the entry as a valid v4 blob. */
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
     selftest_expect_marker(2);
 
     selftest_blob_v2_t v2;
@@ -374,16 +397,42 @@ static void selftest_step_v1_migration(void)
 
 static void selftest_step_v2_migration(void)
 {
-    /* The three v2 booleans survive, the phase lengths get their
-     * defaults and the entry is reported as loaded. */
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, false, true, false, 25, 5,
+    /* The three v2 booleans survive, the phase lengths and the idle
+     * minutes get their defaults and the entry is reported as loaded. */
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, false, true, false, 25, 5, 2,
                            "a valid v2 blob migrates in place");
     SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK,
                    "a v2 migration is not an error");
-    selftest_expect_valid_blob(0, 1, 0, 25, 5);
+    selftest_expect_valid_blob(0, 1, 0, 25, 5, 2);
     selftest_expect_marker(3);
 
-    selftest_blob_v3_t blob;
+    /* Inject a valid legacy v3 entry with non-default phase lengths, so
+     * step 5 can prove the migration preserved them. */
+    selftest_blob_v3_t v3;
+    memset(&v3, 0, sizeof(v3));
+    v3.schema_version = 3;
+    v3.payload_size = 5;
+    v3.wifi_auto_connect = 1;
+    v3.sound_enabled = 0;
+    v3.pomodoro_sound_enabled = 1;
+    v3.focus_minutes = 90;
+    v3.break_minutes = 10;
+    SELFTEST_CHECK(selftest_write_blob(&v3, sizeof(v3)) == ESP_OK,
+                   "inject a valid legacy v3 blob");
+}
+
+static void selftest_step_v3_migration(void)
+{
+    /* The five v3 fields survive, the idle minutes get their default
+     * and the entry is reported as loaded. */
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_NVS, true, false, true, 90, 10, 2,
+                           "a valid v3 blob migrates in place");
+    SELFTEST_CHECK(xiaomiao_settings_last_error() == ESP_OK,
+                   "a v3 migration is not an error");
+    selftest_expect_valid_blob(1, 0, 1, 90, 10, 2);
+    selftest_expect_marker(4);
+
+    selftest_blob_v4_t blob;
     memset(&blob, 0, sizeof(blob));
     blob.schema_version = 99;
     blob.payload_size = SELFTEST_PAYLOAD;
@@ -392,20 +441,21 @@ static void selftest_step_v2_migration(void)
     blob.pomodoro_sound_enabled = 1;
     blob.focus_minutes = 25;
     blob.break_minutes = 5;
+    blob.screen_idle_minutes = 2;
     SELFTEST_CHECK(selftest_write_blob(&blob, sizeof(blob)) == ESP_OK,
                    "inject an unknown schema version");
 }
 
 static void selftest_step_unknown_version(void)
 {
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5,
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5, 2,
                            "an unknown version falls back to the defaults");
-    /* The repair rewrote this key as a valid v3 blob... */
-    selftest_expect_valid_blob(1, 1, 1, 25, 5);
+    /* The repair rewrote this key as a valid v4 blob... */
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
     /* ...and left every other key of the namespace alone. */
-    selftest_expect_marker(4);
+    selftest_expect_marker(5);
 
-    selftest_blob_v3_t blob;
+    selftest_blob_v4_t blob;
     memset(&blob, 0, sizeof(blob));
     blob.schema_version = SELFTEST_VERSION;
     blob.payload_size = SELFTEST_PAYLOAD;
@@ -414,32 +464,56 @@ static void selftest_step_unknown_version(void)
     blob.pomodoro_sound_enabled = 1;
     blob.focus_minutes = 0;
     blob.break_minutes = 5;
+    blob.screen_idle_minutes = 2;
     SELFTEST_CHECK(selftest_write_blob(&blob, sizeof(blob)) == ESP_OK,
                    "inject an out-of-range focus length");
 }
 
 static void selftest_step_bad_range(void)
 {
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5,
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5, 2,
                            "an out-of-range length falls back to the defaults");
-    selftest_expect_valid_blob(1, 1, 1, 25, 5);
-    selftest_expect_marker(5);
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
+    selftest_expect_marker(6);
 
-    /* Four bytes: shorter than v3, so nvs_get_blob() succeeds and the
+    /* Idle minutes must be a menu candidate (0/1/2/5/10); anything else
+     * is damage, not a legal "custom" value. */
+    selftest_blob_v4_t blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.schema_version = SELFTEST_VERSION;
+    blob.payload_size = SELFTEST_PAYLOAD;
+    blob.wifi_auto_connect = 1;
+    blob.sound_enabled = 1;
+    blob.pomodoro_sound_enabled = 1;
+    blob.focus_minutes = 25;
+    blob.break_minutes = 5;
+    blob.screen_idle_minutes = 3;
+    SELFTEST_CHECK(selftest_write_blob(&blob, sizeof(blob)) == ESP_OK,
+                   "inject an invalid idle value");
+}
+
+static void selftest_step_bad_idle(void)
+{
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5, 2,
+                           "an invalid idle value falls back to the defaults");
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
+    selftest_expect_marker(7);
+
+    /* Four bytes: shorter than v4, so nvs_get_blob() succeeds and the
      * Service's own length check has to reject it. */
-    const uint8_t short_blob[4] = { 3, 0, 5, 0 };
+    const uint8_t short_blob[4] = { 4, 0, 6, 0 };
     SELFTEST_CHECK(selftest_write_blob(short_blob, sizeof(short_blob)) == ESP_OK,
-                   "inject a blob shorter than v3");
+                   "inject a blob shorter than v4");
 }
 
 static void selftest_step_short_blob(void)
 {
-    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5,
+    selftest_expect_loaded(XIAOMIAO_SETTINGS_SOURCE_RECOVERED, true, true, true, 25, 5, 2,
                            "a short blob falls back to the defaults");
-    selftest_expect_valid_blob(1, 1, 1, 25, 5);
-    selftest_expect_marker(6);
+    selftest_expect_valid_blob(1, 1, 1, 25, 5, 2);
+    selftest_expect_marker(8);
 
-    /* Sixteen bytes: longer than the v3 buffer, so nvs_get_blob()
+    /* Sixteen bytes: longer than the v4 buffer, so nvs_get_blob()
      * refuses the read before the Service can see the data. */
     uint8_t long_blob[16];
     memset(long_blob, 0, sizeof(long_blob));
@@ -450,8 +524,9 @@ static void selftest_step_short_blob(void)
     long_blob[6] = 1;
     long_blob[7] = 25;
     long_blob[8] = 5;
+    long_blob[9] = 2;
     SELFTEST_CHECK(selftest_write_blob(long_blob, sizeof(long_blob)) == ESP_OK,
-                   "inject a blob longer than v3");
+                   "inject a blob longer than v4");
 }
 
 static void selftest_step_long_blob(void)
@@ -473,12 +548,13 @@ static void selftest_step_long_blob(void)
                    "get works in the degraded state");
     SELFTEST_CHECK(snapshot.wifi_auto_connect && snapshot.sound_enabled &&
                    snapshot.pomodoro_sound_enabled &&
-                   snapshot.focus_minutes == 25 && snapshot.break_minutes == 5,
+                   snapshot.focus_minutes == 25 && snapshot.break_minutes == 5 &&
+                   snapshot.screen_idle_minutes == 2,
                    "the degraded state serves the defaults");
     /* The unreadable entry is reported, not repaired: it must still be
      * the 16-byte blob this step injected, and the other key must have
      * survived too. */
-    selftest_expect_marker(7);
+    selftest_expect_marker(9);
 
     uint8_t probe[16];
     memset(probe, 0, sizeof(probe));
@@ -517,15 +593,21 @@ void xiaomiao_settings_service_selftest_run(void)
         selftest_step_v2_migration();
         break;
     case 4:
-        selftest_step_unknown_version();
+        selftest_step_v3_migration();
         break;
     case 5:
-        selftest_step_bad_range();
+        selftest_step_unknown_version();
         break;
     case 6:
-        selftest_step_short_blob();
+        selftest_step_bad_range();
         break;
     case 7:
+        selftest_step_bad_idle();
+        break;
+    case 8:
+        selftest_step_short_blob();
+        break;
+    case 9:
         selftest_step_long_blob();
         break;
     default:

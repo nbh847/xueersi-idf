@@ -282,6 +282,9 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_POMO_LABEL_FOCUS_LEN] = "Focus time",
     [XM_TEXT_POMO_LABEL_BREAK_LEN] = "Break time",
     [XM_TEXT_POMO_UNIT_MIN] = "min",
+
+    [XM_TEXT_HINT_A_SAVE_B_BACK] = "A Save  B Back",
+    [XM_TEXT_SETTINGS_SCREEN_IDLE] = "Screen idle",
 };
 
 static const char *const s_text_zh[XM_TEXT_COUNT] = {
@@ -542,6 +545,9 @@ static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_POMO_LABEL_FOCUS_LEN] = "专注时长",
     [XM_TEXT_POMO_LABEL_BREAK_LEN] = "休息时长",
     [XM_TEXT_POMO_UNIT_MIN] = "分钟",
+
+    [XM_TEXT_HINT_A_SAVE_B_BACK] = "A 保存  B 返回",
+    [XM_TEXT_SETTINGS_SCREEN_IDLE] = "息屏设置",
 };
 
 /* Table geometry: a missing entry would read as NULL, not as a shift. */

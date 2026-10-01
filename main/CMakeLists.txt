@@ -11,7 +11,8 @@ set(FRAMEWORK_SRCS "framework/xiaomiao_app_registry.c"
                    "framework/xiaomiao_launcher.c"
                    "framework/xiaomiao_i18n.c"
                    "framework/xiaomiao_icons.c"
-                   "framework/xiaomiao_wifi_indicator.c")
+                   "framework/xiaomiao_wifi_indicator.c"
+                   "framework/xiaomiao_screen_idle.c")
 
 # System Services (goal nodes 9, 10, 11 and 14; goal 20261001-1036 adds
 # the Buzzer Service as the single GPIO14 owner and the Pomodoro Service

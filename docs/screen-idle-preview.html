@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小喵待机画面预览</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#11151c;color:#e8edf5;font-family:system-ui,sans-serif}main{padding:36px 20px;text-align:center}h1{font-size:24px;font-weight:600}p{color:#99a5b6;line-height:1.8}.frame{display:inline-block;padding:16px;background:#222935;border:1px solid #394253;border-radius:22px}.screen{display:block;width:min(480px,75vw);height:auto;background:#000}.actual{display:block;width:160px;height:128px;margin:16px auto;background:#000}.caption{font-size:12px;color:#8995a7}
+
+
+.eyes{animation:blink 4.6s linear infinite}
+.antenna-left{animation:ear-left 4.8s ease-in-out infinite;transform-origin:72px 54px}
+.antenna-right{animation:ear-right 4.8s ease-in-out infinite;transform-origin:92px 54px}
+@keyframes blink{0%,42%,46%,100%{d:path("M64 73 L73 67 M91 67 L100 73")}44%{d:path("M64 71 L73 71 M91 71 L100 71")}}
+@keyframes ear-left{0%,60%,82%,100%{transform:rotate(0deg)}66%,76%{transform:rotate(13deg)}71%{transform:rotate(-5deg)}}
+@keyframes ear-right{0%,60%,82%,100%{transform:rotate(0deg)}66%,76%{transform:rotate(-13deg)}71%{transform:rotate(5deg)}}
+ .mouth{animation:mouth 5.8s ease-in-out infinite}
+@keyframes mouth{0%,60%,84%,100%{d:path("M76 81 Q78 86 82 81 Q86 86 89 81")}69%,76%{d:path("M76 81 Q78 88 82 82 Q86 88 89 81")}}
+@media(prefers-reduced-motion:reduce){.eyes,.antenna-left,.antenna-right,.mouth{animation:none}}
+</style>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
+<symbol id="idle-screen" viewBox="0 0 160 128">
+<rect width="160" height="128" fill="#000"/>
+<g transform="translate(80 64) scale(1.6) translate(-82.5 -69)" fill="none" stroke="#E8E8E6" stroke-linecap="round" stroke-linejoin="round">
+<g stroke-width="4.5">
+<path class="antenna-left" d="M72 54 L66 44"/>
+<path class="antenna-right" d="M92 54 L98 44"/>
+</g>
+<path stroke-width="2.2" d="M53 65 C54 56 59 54 69 54 L96 54 C105 54 109 58 110 66 L113 86 C114 93 110 95 102 95 L62 95 C53 95 51 92 52 85 Z"/>
+<path class="eyes" stroke-width="4.5" d="M64 73 L73 67 M91 67 L100 73"/>
+<path class="mouth" stroke-width="1.5" d="M76 81 Q78 86 82 81 Q86 86 89 81"/>
+</g>
+</symbol></defs></svg>
+<main>
+<h1>空闲待机画面</h1>
+<p>纯黑背景，中央简笔画小电视。<br>屏幕内只保留图案，不显示文字或 Wi-Fi 图标。</p>
+<div class="frame"><svg class="screen" viewBox="0 0 160 128" role="img" aria-label="黑底屏幕，中央浅白线条小电视"><use href="#idle-screen"/></svg></div>
+<p class="caption">放大预览 · 画布 160 × 128 · 主体约 104 × 90 px · 居中 · 单圈轮廓 · 浅白线条 · 无外圈、无填充、无阴影</p>
+<p>原始尺寸参考</p>
+<svg class="actual" viewBox="0 0 160 128" role="img" aria-label="原始尺寸待机画面"><use href="#idle-screen"/></svg>
+<p class="caption">浏览器 CSS 像素示意，实际物理尺寸以设备屏幕为准。<br>机身固定，眨眼、嘴巴轻微开合，天线像耳朵一样轻轻抬起、落下，不晃动。<br>仅预览显示样式，按键唤醒与固件功能尚未实现。</p>
+<p class="caption">根据参考 GIF 重新绘制线条轮廓，无原图嵌入。<br>造型参考：<br>
+<a style="color:#00AEEC" href="https://www.bilibili.com/video/av14526719/" target="_blank" rel="noopener">小电视加载画面参考</a> ·
+<a style="color:#00AEEC" href="https://tenor.com/view/bilibili-mini-tv-gif-26901411" target="_blank" rel="noopener">小电视表情 GIF 参考</a></p>
+</main>
+</html>
