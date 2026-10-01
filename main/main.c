@@ -2514,20 +2514,24 @@ static esp_err_t launcher_register_app(const xiaomiao_app_t *app)
  * then initialize the App Manager and show the Launcher. Each stage
  * reports its own error and stops there instead of falling back to a
  * directly built dashboard.
+ *
+ * Entry order follows the 2026-09-30 reorganization design: the first
+ * page is PC Monitor, Tools, Games, Settings (Games at slot index 2),
+ * Hardware Test stays on page 2, and the boot focus lands on index 0.
  */
 static esp_err_t launcher_boot(lv_group_t *group)
 {
-    esp_err_t err = launcher_register_app(xiaomiao_games_app());
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = launcher_register_app(xiaomiao_pc_monitor_app());
+    esp_err_t err = launcher_register_app(xiaomiao_pc_monitor_app());
     if (err != ESP_OK) {
         return err;
     }
 
     err = launcher_register_app(xiaomiao_tools_app());
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = launcher_register_app(xiaomiao_games_app());
     if (err != ESP_OK) {
         return err;
     }

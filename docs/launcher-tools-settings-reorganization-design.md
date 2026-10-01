@@ -1,8 +1,12 @@
 # Launcher 顺序与 Tools／Settings 信息归位设计
 
-状态：设计待审；仅文档，未修改固件，未构建或实机验证。2026-09-27 19:25。
+状态：已实施并完成实机验收（2026-10-01，施工 Goal 已收口）。施工与验收记录：`goals/20260930-2146-launcher-settings-reorganization.md`。
 
-## 目标
+## 实施顺序与依赖
+
+本设计是已确认实施顺序的第 1 步，后续依次为 Tools 番茄时钟、空闲待机画面；当前进度以 `ROADMAP.md` 为准。先稳定入口与页面结构，Tools 在番茄时钟实施前可暂时显示“暂无工具”。本步独立验收入口可达、两级 B 返回、焦点恢复与原有功能回归，通过后再实施番茄时钟。本步骤已实施并验收，后续两步仍按各自设计推进。
+
+## 产品目标
 
 1. Launcher 第一页第三格显示 `Games`。
 2. `Tools` 不再显示目前的 Wi-Fi、System Info、About、Assets。这四项都是设备状态、设置或诊断信息，应从 Settings 的对应位置访问。
@@ -50,7 +54,7 @@
 
 ### Tools
 
-保持注册、图标与 App 生命周期。最终菜单仅有「番茄时钟」，A 进入计时详情，B 返回 Launcher；不保留 Wi-Fi／系统／资源／关于的隐藏入口。若信息归位先于番茄时钟开发完成，过渡版可显示“暂无工具”并让 B 返回；最终验收以单入口菜单为准。
+保持注册、图标与 App 生命周期。最终菜单仅有「番茄时钟」，A 进入计时详情，B 返回 Launcher；不保留 Wi-Fi／系统／资源／关于的隐藏入口。若信息归位先于番茄时钟开发完成，过渡版可显示“暂无工具”并让 B 返回；本阶段验收以空状态为准，单入口菜单由后续番茄时钟任务验收。
 
 ## 代码落点与边界
 
@@ -62,7 +66,7 @@
 | `main/framework/xiaomiao_i18n.{h,c}` | 补充或重新归类“暂无工具”“连接详情”“资源状态”“配置状态”等文案；不改变已有文案 ID 的含义以致其他页面错字 |
 | `README.md`、`docs/project-overview.md`、`ROADMAP.md` | 实施并取得必要验证后更新当前状态、导航与验证记录；历史 Goal 文档保留原样，作为当时版本的验收记录 |
 
-迁移只改变 UI 信息归属和 Launcher 顺序，不改变 Wi-Fi Service、Settings Service、Assets／Font／Storage Service 的业务语义，不触碰 NVS schema、网络凭据、分区表或 GD32 固件。已在进行中的 PC Monitor 额度工作保持独立，避免交叉修改其业务页面。
+迁移只改变 UI 信息归属和 Launcher 顺序，不改变 Wi-Fi Service、Settings Service、Assets／Font／Storage Service 的业务语义，不触碰 NVS schema、网络凭据、分区表或 GD32 固件。已完成的 PC Monitor 额度功能保持独立，不修改其业务页面。
 
 ## 实施检查点与验收
 
@@ -70,7 +74,7 @@
 | --- | --- | --- |
 | CP1 Launcher 顺序 | 五个 App ID 唯一、注册顺序为 `pc_monitor/tools/games/settings/hardware_test` | 第一页四格按上图显示；第三格 A 进入 Games，返回焦点仍在第三格；第二页 Hardware Test 可达 |
 | CP2 Settings 信息归位 | 四项 Tools 内容均有唯一 Settings 入口；服务调用边界、快照失效规则和 B 返回层级正确 | Wi-Fi 连接／断连详情，System 四页逐项目视；配网、忘记网络和配置状态仍可用 |
-| CP3 Tools 单入口与回归 | Tools 不再引用旧详情状态／定时器，资源释放与焦点归还正确；`git diff --check` | 最终 Tools 仅见番茄时钟入口；Settings 多层往返、五 App 开关、Hardware Test B 长按、资源异常显示无回归。计时行为另按番茄时钟设计验收 |
+| CP3 Tools 过渡页与回归 | Tools 不再引用旧详情状态／定时器，资源释放与焦点归还正确；`git diff --check` | 本阶段 Tools 仅显示“暂无工具”，B 返回 Launcher；Settings 多层往返、五 App 开关、Hardware Test B 长按、资源异常显示无回归。番茄时钟入口与计时行为由下一步独立任务验收 |
 
 固件构建、烧录和目标板操作依项目 `AGENTS.md` 由人工执行，可用 `idf.py build` 或 `idf.py -p COM5 flash monitor`；Agent 复核源码、diff、人工日志和照片。没有人工构建与实机证据时不能把开发节点标为完成。
 

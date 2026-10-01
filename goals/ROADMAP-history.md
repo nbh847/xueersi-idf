@@ -6,6 +6,16 @@
 
 ## 施工记录
 
+- 2026-10-01 09:18 -- 信息归位接手收尾：复核实际代码 diff 与既有人工验收记录，未发现明确新增代码问题；同步 AGENTS 的 Tools 定位，清理 Goal、设计与路线图旧阶段措辞，静态检查通过。未重复构建或实机验证，原证据限制保留。→ `goals/20260930-2146-launcher-settings-reorganization.md`
+
+- 2026-10-01 09:09 -- 信息归位收口：负责人烧录复验资源状态页 SD 容量显示后确认「验收过了，都正常」，两轮实机验收全部通过；同步更新 Goal、ROADMAP、README、项目概览、设计文档状态与历史索引，`git diff --check` 通过。证据类型为人工确认（未附串口日志或照片，10 次开合与串口无新增错误按整体确认接受），英文回退保持静态核对未实机演示。→ `goals/20260930-2146-launcher-settings-reorganization.md`
+
+- 2026-10-01 09:02 -- 信息归位第一轮实机反馈：负责人确认首页顺序、Wi-Fi 详情、System 结构与 Tools 空状态正常；按反馈把资源状态页 SD 行改为已挂载时显示真实容量（MB，读 Storage Service 快照，不触发挂载）。改动待重新烧录复验；i18n 验证口径对齐为「全页面无 `???` 且中文正常」，英文回退不做损坏注入实机演示。→ `goals/20260930-2146-launcher-settings-reorganization.md`
+
+- 2026-09-30 22:12 -- 信息归位 CP1～CP4 代码实施：Launcher 注册顺序改为 pc_monitor／tools／games／settings／hardware_test，Settings 新增 Wi-Fi 连接详情与 System 四项子菜单（迁移 Tools 的系统信息、资源状态、关于），Tools 重写为「暂无工具」过渡页，i18n 追加 4 个文案 ID。静态复核与 `git diff --check` 通过；构建、烧录与实机验收（CP5）未执行，板上仍为旧固件。→ `goals/20260930-2146-launcher-settings-reorganization.md`
+
+- 2026-09-30 21:46 -- 负责人确认 Launcher 顺序与 Tools／Settings 信息归位方案，创建施工 Goal，明确本阶段 Tools 验收为“暂无工具”；实施顺序为信息归位、番茄时钟、空闲待机画面，各步独立验收。本次仅文档，固件未实施或验证。→ `goals/20260930-2146-launcher-settings-reorganization.md`
+
 - 2026-09-28 13:02 -- 光带扫入动效收尾：静态复核发现 Settings／Tools 快速连按时新动画覆盖对象引用、旧光带可能残留；已在启动新光带前停止旧动画，并为 Launcher／Settings／Tools 的动画创建失败补充对象释放。负责人确认修复版构建、烧录通过，Settings／Tools 快速连按光带正常；未附本轮日志或视频。→ `goals/20260928-1037-directional-focus-sweep.md`
 
 - 2026-09-28 12:50 -- 光带扫入动效 Goal 收口：Tools 补接入后项目负责人烧录复验确认「没问题了，我测过了」，附串口日志（Launcher 5 apps 启动、字体 READY、Agent 发现正常；PC Monitor／Settings／Tools 依次开合，`screen children=2` 恒定，无新增错误）。验收标准五项全部勾选；动效参数保持初始值未调整，未附动效视频。→ `goals/20260928-1037-directional-focus-sweep.md`

@@ -257,6 +257,11 @@ static const char *const s_text_en[XM_TEXT_COUNT] = {
     [XM_TEXT_HT_ABOUT_DISPLAY] = "Display",
     [XM_TEXT_HT_ABOUT_BOARD_IO] = "Board IO",
     [XM_TEXT_HT_ABOUT_KEYS] = "Keys",
+
+    [XM_TEXT_TOOLS_EMPTY] = "No tools",
+    [XM_TEXT_WIFI_DETAILS] = "Details",
+    [XM_TEXT_SETTINGS_RESOURCES] = "Resources",
+    [XM_TEXT_SETTINGS_CONFIG_STATUS] = "Config",
 };
 
 static const char *const s_text_zh[XM_TEXT_COUNT] = {
@@ -492,6 +497,11 @@ static const char *const s_text_zh[XM_TEXT_COUNT] = {
     [XM_TEXT_HT_ABOUT_DISPLAY] = "显示",
     [XM_TEXT_HT_ABOUT_BOARD_IO] = "板卡 IO",
     [XM_TEXT_HT_ABOUT_KEYS] = "按键",
+
+    [XM_TEXT_TOOLS_EMPTY] = "暂无工具",
+    [XM_TEXT_WIFI_DETAILS] = "连接详情",
+    [XM_TEXT_SETTINGS_RESOURCES] = "资源状态",
+    [XM_TEXT_SETTINGS_CONFIG_STATUS] = "配置状态",
 };
 
 /* Table geometry: a missing entry would read as NULL, not as a shift. */

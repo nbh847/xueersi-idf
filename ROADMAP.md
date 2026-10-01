@@ -6,11 +6,11 @@
 
 ## 当前状态
 
-- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `Games`、`PC Monitor`（显示名 `Monitor`／「监控」）、`Tools`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格，`Hardware Test` 在第 2 页。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”。
+- 固件基于 ESP-IDF 6.1 与 LVGL 9.5。普通固件开机进入 `main/framework/` 的 Launcher，按注册顺序显示 `PC Monitor`（显示名 `Monitor`／「监控」）、`Tools`、`Games`、`Settings` 与 `Hardware Test` 五个入口：前四项占满第 1 页 2 列 × 2 行网格（监控、工具、游戏、设置），`Hardware Test` 在第 2 页，启动焦点在监控。焦点移动：`←`／`→` 在行内换列，并在外侧列翻页——优先落到相邻页**同一行**，该页没有对应行时回退到它的**第一行第一格**，只有目标页没有任何 App 才不翻页；`↑`／`↓` 在页内换行，不翻页。其余越出网格的移动保持焦点、不循环。该模型于 2026-09-20 取代节点 3 决策 5 的“左右限本行、上下跨页”；注册顺序由 2026-10-01 收口的信息归位 Goal 调整。
 - 分层：`main/framework/` 为 App Framework 运行时（节点 1～3，节点 10 新增挂在 top layer 的全局 Wi-Fi 图标），`main/apps/` 为业务 App（节点 5～8，节点 11 把 PC Monitor 接到 Agent Service 快照；AI 额度 Goal 把该 App 扩为 4 页并让 Agent Service 提供两个服务商的额度快照），`main/services/` 为 Service 层（节点 9 的 `Settings Service`，节点 10 的 `Wi-Fi Service` 及其配网网页、DNS 私有实现，节点 11 的 `Agent Service` 及 `pc-agent/` Python 后端；App 不直接访问 NVS，也不直接调用 `esp_wifi_*`、`esp_http_client` 或 cJSON），`main/main.c` 持有 15 页 Hardware Dashboard 并注册为 `Hardware Test` App。BSP 分层尚未实现。
 - Dashboard 覆盖 15 个页面：光照、热敏、运动、LED1、LED2、蜂鸣器、电机 1、电机 2、MicroSD、GPIO25、GPIO26、ADC32、ADC33、系统、About。
 - ESP32 侧已接入 ST7735、六键输入、ADC、LEDC、SPI MicroSD、GD32 `0x40` 与 MPU6050 `0x68`。GD32 仓库源码只实现 USB CDC、USART1 桥与 ESP32 IO0/EN 控制，未实现 I2C `0x40` 从机协议；但项目负责人于 2026-09-27 报告 Hardware Test 可在实机控制 LED1／LED2，表明板上控制链路可用，实际 GD32 固件与仓库源码的对应关系待查。
-- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，Tools 的 Wi-Fi 页显示真实连接状态。
+- Settings 的 `wifi_auto_connect` 已由节点 10 的 Wi-Fi Service 消费，用于控制开机自动连接与断线重连；`sound_enabled` 仍只是持久化偏好，要等节点 12 才有业务效果。Settings 的 Wi-Fi 页已支持配网、自动连接和忘记网络，状态行可进入连接详情（状态、SSID、信号、IPv4，实时快照）；System 为系统信息、资源状态（SD 已挂载时显示容量 MB）、配置状态、关于四项子菜单。Tools 经 2026-10-01 收口的信息归位 Goal 改为「暂无工具」过渡页，原有 Wi-Fi、System Info、Assets、About 已全部迁入 Settings，番茄时钟由下一步独立任务实施。
 
 ## 当前开发节点
 
@@ -37,11 +37,11 @@
 
 - **已完成：PC Agent 局域网动态发现补充**（`goals/20260927-1549-agent-service-discovery.md`）。固件与 PC 端发现协议已实施并完成软件侧检查；2026-09-27 已通过首个局域网实机验收（设备动态发现 Agent、HTTP 200、CPU／内存正常显示），Agent 停止后指标失效、重启后自动恢复。2026-09-28 项目负责人确认收口，更换 Wi-Fi 环境后的复验不再保留为未完成项。适用范围是每次设备与电脑位于可互通的同一局域网，暂不处理跨子网发现。
 
-- **监控 App 智谱与 Codex 额度已于 2026-09-27 完成并取得人工验收确认**（设计 `docs/monitor-ai-quota-design.md`；施工 `goals/20260927-1855-monitor-ai-quotas.md`）。PC Agent 新增两个只读额度端点（`/api/v1/quotas/codex`、`/api/v1/quotas/zhipu`，健康端点能力列表同步），固件 Agent Service 新增共享发现链路、额度快照与独立低频 Worker（180 秒过期，与 PC 指标的 1 秒轮询／3 秒失效互不影响），监控 App 扩为四页（第 3 页智谱 `5H`／`1W`、第 4 页 Codex `5H`／`7D`）并把 Launcher 显示名改为「监控」／`Monitor`，i18n 增至 213 个文案 ID。软件侧验证：102 项 Python 用例（含只读缓存、响应无凭据、失败后恢复、同一时间采样四条口径）、本机 HTTP 冒烟两个端点 `status=ok`、倒计时边界宿主编译核对、字库覆盖与静态检查。实机验收：第一轮照片确认第 4 页 Codex 显示正确，同时暴露三处缺陷——`RAM` 被截成 `RA`（28 px 名称框装不下 Montserrat 12 的 ≈27.8 px，折行第二行被裁）、额度页状态文字与右上 Wi-Fi 图标重合（状态框右边界到 156，图标占 140..158）、四页标题底部被裁（标题框 14 px 小于 16 px 档字体的 19 px 行高，折行后裁切）；已分别改为每项指标一个 78 px 单标签（`名称 数值 单位`）并 `CLIP`、状态右边界收到 136、标题框加高到 20 px。项目负责人于 2026-09-27 复测后确认「功能没问题，都验证过了」。证据类型：人工确认，第一轮附实机照片，最终确认与第二轮反馈未附串口日志。
+- **监控 App 智谱与 Codex 额度已于 2026-09-27 完成并取得人工验收确认**（设计 `docs/monitor-ai-quota-design.md`；施工 `goals/20260927-1855-monitor-ai-quotas.md`）。PC Agent 新增两个只读额度端点（`/api/v1/quotas/codex`、`/api/v1/quotas/zhipu`，健康端点能力列表同步），固件 Agent Service 新增共享发现链路、额度快照与独立低频 Worker（180 秒过期，与 PC 指标的 1 秒轮询／3 秒失效互不影响），监控 App 扩为四页（第 3 页智谱 `5H`／`1W`、第 4 页 Codex `5H`／`7D`）并把 Launcher 显示名改为「监控」／`Monitor`，i18n 增至 217 个文案 ID。软件侧验证：102 项 Python 用例（含只读缓存、响应无凭据、失败后恢复、同一时间采样四条口径）、本机 HTTP 冒烟两个端点 `status=ok`、倒计时边界宿主编译核对、字库覆盖与静态检查。实机验收：第一轮照片确认第 4 页 Codex 显示正确，同时暴露三处缺陷——`RAM` 被截成 `RA`（28 px 名称框装不下 Montserrat 12 的 ≈27.8 px，折行第二行被裁）、额度页状态文字与右上 Wi-Fi 图标重合（状态框右边界到 156，图标占 140..158）、四页标题底部被裁（标题框 14 px 小于 16 px 档字体的 19 px 行高，折行后裁切）；已分别改为每项指标一个 78 px 单标签（`名称 数值 单位`）并 `CLIP`、状态右边界收到 136、标题框加高到 20 px。项目负责人于 2026-09-27 复测后确认「功能没问题，都验证过了」。证据类型：人工确认，第一轮附实机照片，最终确认与第二轮反馈未附串口日志。
 
 - **待审设计：空闲待机画面**（`docs/screen-idle-design.md`）。默认 2 分钟无按键进入黑底静态小电视画面，设置页可调时间，任意键唤醒并保留原页面；背光直连 VCC，无法物理熄灭或保证省电。文档待负责人审阅，固件尚未实施或验证。
 
-- **待审设计：Launcher 顺序与 Tools／Settings 信息归位**（`docs/launcher-tools-settings-reorganization-design.md`）。Games 拟移至第一页第三格；Tools 现有 Wi-Fi、System Info、About、Assets 全部改从 Settings 的 Wi-Fi／System 页面访问，Tools 最终只留番茄时钟入口。仅完成设计，当前固件仍按旧顺序和旧页面运行，尚未构建或实机验证。
+- **已完成：Launcher 顺序与 Tools／Settings 信息归位**（设计 `docs/launcher-tools-settings-reorganization-design.md`；施工 `goals/20260930-2146-launcher-settings-reorganization.md`）。2026-09-30 22:12 完成 CP1～CP4 代码实施：Launcher 注册顺序改为 `pc_monitor/tools/games/settings/hardware_test`（Games 第一页第三格，启动焦点在监控）；Settings 的 Wi-Fi 状态行进入连接详情（迁移自 Tools，实时快照每秒刷新），System 改为系统信息／资源状态／配置状态／关于四项子菜单；Tools 重写为「暂无工具」过渡页；i18n 追加 4 个文案 ID。2026-10-01 两轮实机验收通过（第一轮反馈资源状态页 SD 行改为已挂载时显示真实容量 MB，复验通过），负责人确认全部正常；证据类型为人工确认，未附串口日志或照片，英文回退未做损坏注入实机演示（静态核对）。CP6 文档已同步收口。
 
 - **待审设计：Tools 番茄时钟**（`docs/pomodoro-timer-design.md`）。拟采用黑白圆环与中央倒计时，固定 25 分钟专注／5 分钟休息，离开 App 或进入待机画面后继续计时，完成后返回页面可见结果，本版不弹全局提醒。仅设计，固件未实施或验证，视觉效果待目标板验收。
 
@@ -80,6 +80,12 @@
 - [ ] 节点 16：GD32 `0x40` 协议源码补齐与实机固件差异核对。2026-09-27 调研确认原理图芯片为 `GD32F350G8U6TR`；仓库及对应公开源码目录均未找到 I2C 从机实现，公开 Release 也未找到单独标注的 GD32 镜像。`letsgo.bin` 是否包含 GD32 固件未知。LED1／LED2 实机可控（负责人报告，无日志），与当前源码的对应关系待确认；电机未接入，无法实测。
 
 ## 下一步
+
+三项 UI 工作的实施顺序已由项目负责人确认：**Launcher 顺序与 Tools／Settings 信息归位 → Tools 番茄时钟 → 空闲待机画面**。每步独立实施并完成人工验收后再进入下一步；信息归位已完成，番茄时钟与空闲待机画面仍待审、未实施。
+
+- ~~信息归位~~：**已完成并验收（2026-10-01）**，入口与页面结构稳定，Tools 显示「暂无工具」；记录见上方已完成条目。设计见 `docs/launcher-tools-settings-reorganization-design.md`。
+- 番茄时钟：在归位后的 Tools 中增加唯一入口，按实际经过时间计时；验收开始、暂停、继续、完成及离开 App 后计时准确。该步不依赖待机功能，是当前实施顺序的下一步。设计见 `docs/pomodoro-timer-design.md`。
+- 空闲待机画面：最后接入全局输入与覆盖层；验收待机期间番茄计时继续、六键唤醒并吞掉唤醒键、页面与焦点恢复、长按 B 不误触发及全 App 回归。设计见 `docs/screen-idle-design.md`。
 
 1. 节点 16 先取得板载 GD32 固件来源或可核对的固件读取结果，查明其与仓库源码的差异，再补齐 `0x40` 处理；电机协议按 README 与 ESP32 发送格式核对实现。电机未接入，实机动作保持未验证；MPU6050 实机行为另行标记为未验证。
 2. 节点 16（GD32 `0x40` 协议源码补齐与实机差异核对）可按计划继续；节点 12（Audio Service）与节点 13（首个正式游戏）继续推迟。节点 15 与配网回归均已收口，证据分别见节点 15 总纲和 `goals/20260925-1120-wifi-provisioning-httpd-task-fix.md`。

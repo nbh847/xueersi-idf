@@ -283,6 +283,15 @@ typedef enum {
     XM_TEXT_HT_ABOUT_BOARD_IO,
     XM_TEXT_HT_ABOUT_KEYS,
 
+    /* 2026-09-30 reorganization: Tools empty transition page, the
+     * Settings Wi-Fi connection details page and the two new System
+     * submenu entries. Appended after the existing IDs so stable IDs
+     * keep their values. */
+    XM_TEXT_TOOLS_EMPTY,
+    XM_TEXT_WIFI_DETAILS,
+    XM_TEXT_SETTINGS_RESOURCES,
+    XM_TEXT_SETTINGS_CONFIG_STATUS,
+
     XM_TEXT_COUNT
 } xiaomiao_text_id_t;
 

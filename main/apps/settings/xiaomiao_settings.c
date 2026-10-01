@@ -1,18 +1,30 @@
 /*
- * Settings App (goal nodes 8, 9, 10 and 15C).
+ * Settings App (goal nodes 8, 9, 10, 15C and the 2026-09-30 reorganization).
  *
  * UI skeleton plus the real Service reads: an in-App menu (Wi-Fi /
- * Display / Sound / System) with four detail pages. Everything is built
- * under the Navigation content root; the App never creates, switches or
- * deletes a global screen and never touches hardware or NVS.
+ * Display / Sound / System). Everything is built under the Navigation
+ * content root; the App never creates, switches or deletes a global
+ * screen and never touches hardware or NVS.
  *
  * Boundary rules:
  * - The Wi-Fi page is the configuration and management entry: it reports
  *   the real connection state, persists the automatic-connect
  *   preference through the Settings Service before asking the Wi-Fi
  *   Service to apply it, starts the provisioning session and forgets the
- *   saved network after a confirmation. It never calls `esp_wifi_*`
+ *   saved network after a confirmation. The status row opens the
+ *   connection details page (status, SSID, signal, IPv4) migrated from
+ *   Tools: it reads a fresh Wi-Fi Service snapshot on entry and
+ *   refreshes once per second while open, and a disconnected station
+ *   never shows an address or a signal from an earlier link. The App
+ *   never calls `esp_wifi_*`
  *   itself and never sees a password (goal node 10, checkpoint 4).
+ * - System is a four-entry submenu (System Info / Resources / Config /
+ *   About) holding the diagnostics migrated from Tools plus the
+ *   original persistence state page. The read-only pages keep the
+ *   Tools data sources and degradation semantics: real values read once
+ *   on entry, "Unknown" on read failure, "None" for a missing PSRAM,
+ *   and the CPU line stays the configured frequency, never a claimed
+ *   runtime measurement.
  * - Sound still names the node that will deliver it: the preference has
  *   no effect until node 12 (goal node 9, decision 3).
  * - Display states a hardware fact instead of a missing setting: the
@@ -37,8 +49,13 @@
  * the latch once the keypad reports the key released (goal decision 10).
  * Closing the App is deferred to that timer as well, so the focused
  * object is never deleted from inside its own key callback. The same
- * timer throttles the one-second refresh of the provisioning page, so no
- * second timer is needed.
+ * timer throttles the one-second refresh of the provisioning and
+ * connection-details pages, so no second timer is needed.
+ *
+ * Back levels (reorganization CP3): one B press exits exactly one
+ * level, Wi-Fi details -> Wi-Fi list -> top menu -> Launcher and
+ * System details -> System submenu -> top menu -> Launcher. The parent
+ * menu focus index survives the round trip inside one open session.
  */
 
 #include "xiaomiao_settings.h"
@@ -49,14 +66,24 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
+#include "esp_chip_info.h"
 #include "esp_err.h"
+#include "esp_flash.h"
+#include "esp_heap_caps.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_netif_ip_addr.h"
 #include "lvgl.h"
+#include "sdkconfig.h"
 
 #include "framework/xiaomiao_fonts.h"
 #include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
+#include "services/xiaomiao_assets_service.h"
+#include "services/xiaomiao_font_service.h"
 #include "services/xiaomiao_settings_service.h"
+#include "services/xiaomiao_storage_service.h"
 #include "services/xiaomiao_wifi_service.h"
 
 static const char TAG[] = "settings";
@@ -106,6 +133,24 @@ static const char TAG[] = "settings";
 #define SETTINGS_STATUS_LINE_H    16
 #define SETTINGS_STATUS_DETAIL_H  14
 
+/*
+ * Two-column info grid migrated from Tools (goal node 7): name column on
+ * the left, value column on the right, 15 px rows. The Assets rows need
+ * a four-glyph name column, so they use a wider name box.
+ */
+#define SETTINGS_INFO_Y0      20
+#define SETTINGS_INFO_STEP    15
+#define SETTINGS_INFO_H       14
+#define SETTINGS_INFO_NAME_X  4
+#define SETTINGS_INFO_NAME_W  44
+#define SETTINGS_INFO_VAL_X   50
+#define SETTINGS_INFO_VAL_W   106
+#define SETTINGS_INFO_NAME_WIDE  56
+#define SETTINGS_INFO_VAL_X_WIDE 64
+#define SETTINGS_INFO_VAL_W_WIDE 92
+#define SETTINGS_INFO_TEXT_MAX   20
+#define SETTINGS_INFO_VALUE_MAX  40
+
 /* Longest System detail line, e.g. "NVS error 0x110C"; UTF-8 Chinese is
  * three bytes per glyph, so the budget is wider than the pixel one. */
 #define SETTINGS_SYSTEM_DETAIL_MAX 40
@@ -130,11 +175,18 @@ static const char TAG[] = "settings";
 #define SETTINGS_WIFI_ROW_RIGHT      152
 #define SETTINGS_WIFI_MESSAGE_Y  98
 #define SETTINGS_WIFI_MESSAGE_H  12
-#define SETTINGS_WIFI_ROW_COUNT  3
-#define SETTINGS_WIFI_ROW_AUTO   0
-#define SETTINGS_WIFI_ROW_CONFIG 1
-#define SETTINGS_WIFI_ROW_FORGET 2
+/* The status row opens the connection details page, so all four visual
+ * rows are focusable: status, auto connect, configure, forget. */
+#define SETTINGS_WIFI_ROW_COUNT  4
+#define SETTINGS_WIFI_ROW_STATUS 0
+#define SETTINGS_WIFI_ROW_AUTO   1
+#define SETTINGS_WIFI_ROW_CONFIG 2
+#define SETTINGS_WIFI_ROW_FORGET 3
 #define SETTINGS_WIFI_MESSAGE_MAX 40
+#define SETTINGS_WIFI_STATUS_MAX 24
+#define SETTINGS_WIFI_SSID_MAX   40
+#define SETTINGS_WIFI_SIGNAL_MAX 28
+#define SETTINGS_WIFI_IP_MAX     20
 
 /* Provisioning page: four information lines, a state line, the footer. */
 #define SETTINGS_WIFI_PROV_Y0    24
@@ -160,9 +212,14 @@ typedef enum {
     SETTINGS_VIEW_MENU = 0,
     SETTINGS_VIEW_WIFI,
     SETTINGS_VIEW_WIFI_PROVISIONING,
+    SETTINGS_VIEW_WIFI_DETAILS,
     SETTINGS_VIEW_DISPLAY,
     SETTINGS_VIEW_SOUND,
     SETTINGS_VIEW_SYSTEM,
+    SETTINGS_VIEW_SYSTEM_INFO,
+    SETTINGS_VIEW_ASSETS,
+    SETTINGS_VIEW_CONFIG,
+    SETTINGS_VIEW_ABOUT,
 } settings_view_t;
 
 /* Wi-Fi page sub-state: the row list, or the forget confirmation. */
@@ -187,12 +244,30 @@ static const xiaomiao_text_id_t s_menu_label_ids[] = {
 #define SETTINGS_MENU_ITEM_SOUND   2
 #define SETTINGS_MENU_ITEM_SYSTEM  3
 
+/* System submenu order is the focus order (2026-09-30 reorganization):
+ * the Tools diagnostics moved here, the config page keeps its place. */
+static const xiaomiao_text_id_t s_system_label_ids[] = {
+    XM_TEXT_TOOLS_SYSTEM_INFO,
+    XM_TEXT_SETTINGS_RESOURCES,
+    XM_TEXT_SETTINGS_CONFIG_STATUS,
+    XM_TEXT_TOOLS_ABOUT,
+};
+#define SETTINGS_SYSTEM_ITEM_COUNT \
+    (sizeof(s_system_label_ids) / sizeof(s_system_label_ids[0]))
+
+#define SETTINGS_SYSTEM_ITEM_INFO   0
+#define SETTINGS_SYSTEM_ITEM_ASSETS 1
+#define SETTINGS_SYSTEM_ITEM_CONFIG 2
+#define SETTINGS_SYSTEM_ITEM_ABOUT  3
+
 /* The input root owns the focus; the content container is rebuilt per
  * view and never holds the focus itself (goal decisions 5 and 6). */
 static lv_obj_t *s_root;
 static lv_obj_t *s_content;
 static lv_obj_t *s_menu_items[SETTINGS_MENU_ITEM_COUNT];
+static lv_obj_t *s_system_items[SETTINGS_SYSTEM_ITEM_COUNT];
 static lv_obj_t *s_wifi_rows[SETTINGS_WIFI_ROW_COUNT];
+static lv_obj_t *s_wifi_detail_values[SETTINGS_WIFI_ROW_COUNT];
 static lv_obj_t *s_wifi_message;
 static lv_obj_t *s_prov_line_ssid;
 static lv_obj_t *s_prov_line_password;
@@ -205,6 +280,7 @@ static settings_view_t s_view = SETTINGS_VIEW_MENU;
 static settings_wifi_mode_t s_wifi_mode = SETTINGS_WIFI_LIST;
 static size_t s_menu_index;
 static size_t s_wifi_index;
+static size_t s_system_index;
 static uint32_t s_wifi_refresh_ticks;
 static char s_wifi_message_text[SETTINGS_WIFI_MESSAGE_MAX];
 static bool s_b_latched;
@@ -212,7 +288,11 @@ static bool s_back_pending;
 static lv_obj_t *s_sweep_band;
 
 static void settings_show_view(settings_view_t view);
-static void settings_handle_escape(void);static lv_obj_t *settings_create_label(lv_obj_t *parent, const char *text,
+static void settings_handle_escape(void);
+static void settings_wifi_details_apply(void);
+static void settings_build_wifi_details(lv_obj_t *content);
+
+static lv_obj_t *settings_create_label(lv_obj_t *parent, const char *text,
                                        const lv_font_t *font, uint32_t color,
                                        lv_label_long_mode_t mode)
 {
@@ -434,12 +514,13 @@ static void settings_build_detail(lv_obj_t *content, const char *title,
 }
 
 /*
- * The only page that reads a Service, and only through its public
- * interface. It reports where the current configuration came from and,
- * when there is one, the raw error of the last failed load or write.
- * The state is read once per entry and no timer is created.
+ * The System -> Config page, the original System detail page (goal node
+ * 9). It reads only through the Settings Service public interface. It
+ * reports where the current configuration came from and, when there is
+ * one, the raw error of the last failed load or write. The state is
+ * read once per entry and no timer is created.
  */
-static void settings_build_system(lv_obj_t *content)
+static void settings_build_config(lv_obj_t *content)
 {
     /* Fetched to prove the Service is readable; the page reports the
      * Service state, not the values of the persisted fields. */
@@ -492,9 +573,377 @@ static void settings_build_system(lv_obj_t *content)
         }
     }
 
-    settings_build_detail(content, xiaomiao_text(XM_TEXT_SETTINGS_SYSTEM),
+    settings_build_detail(content, xiaomiao_text(XM_TEXT_SETTINGS_CONFIG_STATUS),
                           xiaomiao_text(XM_TEXT_SETTINGS_SERVICE), state,
                           state_color, detail);
+}
+
+/*
+ * ------------------------------------------------------------------
+ * System submenu and the diagnostics migrated from Tools (2026-09-30
+ * reorganization, CP2)
+ * ------------------------------------------------------------------
+ * The four read-only pages keep the Tools data sources: real values
+ * read once on entry from read-only ESP-IDF APIs or Service snapshots,
+ * no hardcoded values, no credentials and no file content on screen.
+ */
+
+/* Generic two-column info page, the Tools grid transplanted. */
+static void settings_build_info_page(lv_obj_t *content, const char *title,
+                                     const xiaomiao_text_id_t *name_ids,
+                                     const char *const *values, size_t count,
+                                     bool wide_name)
+{
+    const int32_t name_w = wide_name ? SETTINGS_INFO_NAME_WIDE
+                                     : SETTINGS_INFO_NAME_W;
+    const int32_t val_x = wide_name ? SETTINGS_INFO_VAL_X_WIDE
+                                    : SETTINGS_INFO_VAL_X;
+    const int32_t val_w = wide_name ? SETTINGS_INFO_VAL_W_WIDE
+                                    : SETTINGS_INFO_VAL_W;
+
+    settings_create_page_title(content, title);
+
+    for (size_t i = 0; i < count; ++i) {
+        const int32_t y = SETTINGS_INFO_Y0 + (int32_t)i * SETTINGS_INFO_STEP;
+
+        settings_place_label(content, xiaomiao_text(name_ids[i]),
+                             xiaomiao_font_small(), SETTINGS_COLOR_TEXT,
+                             SETTINGS_INFO_NAME_X, y, name_w, SETTINGS_INFO_H,
+                             LV_TEXT_ALIGN_LEFT);
+        settings_place_label(content, values[i], xiaomiao_font_small(),
+                             SETTINGS_COLOR_TITLE, val_x, y, val_w,
+                             SETTINGS_INFO_H, LV_TEXT_ALIGN_RIGHT);
+    }
+
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
+}
+
+static const char *settings_chip_name(esp_chip_model_t model)
+{
+    switch (model) {
+    case CHIP_ESP32:
+        return "ESP32";
+    case CHIP_ESP32S2:
+        return "ESP32-S2";
+    case CHIP_ESP32S3:
+        return "ESP32-S3";
+    case CHIP_ESP32C3:
+        return "ESP32-C3";
+    case CHIP_ESP32C2:
+        return "ESP32-C2";
+    case CHIP_ESP32C6:
+        return "ESP32-C6";
+    case CHIP_ESP32H2:
+        return "ESP32-H2";
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNKNOWN);
+    }
+}
+
+/* Flash capacity, or the localized unknown state with the error logged. */
+static void settings_flash_capacity(char *out, size_t out_len)
+{
+    uint32_t bytes = 0;
+    const esp_err_t err = esp_flash_get_size(NULL, &bytes);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "flash size read failed: %s (0x%x)", esp_err_to_name(err),
+                 (unsigned)err);
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_UNKNOWN));
+        return;
+    }
+
+    snprintf(out, out_len, "%u MiB", (unsigned)(bytes / (1024U * 1024U)));
+}
+
+/* PSRAM capacity; a missing PSRAM is the localized "none", not an error. */
+static void settings_psram_capacity(char *out, size_t out_len)
+{
+    const size_t bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+
+    if (bytes == 0) {
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_NONE));
+        return;
+    }
+
+    snprintf(out, out_len, "%u MiB", (unsigned)(bytes / (1024U * 1024U)));
+}
+
+/* Build version from the application description, not a hardcoded tag. */
+static void settings_firmware_version(char *out, size_t out_len)
+{
+    const esp_app_desc_t *desc = esp_app_get_description();
+
+    if (desc == NULL) {
+        ESP_LOGW(TAG, "application description unavailable");
+        snprintf(out, out_len, "%s", xiaomiao_text(XM_TEXT_STATE_UNKNOWN));
+        return;
+    }
+
+    snprintf(out, out_len, "%.*s", (int)sizeof(desc->version), desc->version);
+}
+
+/*
+ * System Info (migrated Tools page): chip, cores, configured CPU
+ * frequency, Flash, PSRAM, ESP-IDF and firmware version. The CPU line
+ * is the Kconfig value, never a claimed runtime measurement
+ * (reorganization decision 5).
+ */
+static void settings_build_system_info(lv_obj_t *content)
+{
+    char chip[24];
+    char cpu[24];
+    char flash[24];
+    char psram[24];
+    char firmware[SETTINGS_INFO_VALUE_MAX];
+    esp_chip_info_t chip_info;
+
+    esp_chip_info(&chip_info);
+    settings_flash_capacity(flash, sizeof(flash));
+    settings_psram_capacity(psram, sizeof(psram));
+    settings_firmware_version(firmware, sizeof(firmware));
+    snprintf(chip, sizeof(chip), "%s x%u", settings_chip_name(chip_info.model),
+             (unsigned)chip_info.cores);
+    snprintf(cpu, sizeof(cpu), "%d MHz", CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+
+    const xiaomiao_text_id_t name_ids[] = { XM_TEXT_LABEL_CHIP,
+                                            XM_TEXT_LABEL_CPU,
+                                            XM_TEXT_LABEL_FLASH,
+                                            XM_TEXT_LABEL_PSRAM,
+                                            XM_TEXT_LABEL_IDF,
+                                            XM_TEXT_LABEL_FW };
+    const char *values[] = { chip, cpu, flash, psram, esp_get_idf_version(),
+                             firmware };
+
+    settings_build_info_page(content, xiaomiao_text(XM_TEXT_TOOLS_SYSTEM_INFO),
+                             name_ids, values,
+                             sizeof(name_ids) / sizeof(name_ids[0]), false);
+}
+
+static const char *settings_assets_state_text(
+    const xiaomiao_assets_snapshot_t *snapshot)
+{
+    if (!snapshot->mounted) {
+        return xiaomiao_text(XM_TEXT_STATE_UNMOUNTED);
+    }
+
+    switch (snapshot->state) {
+    case XIAOMIAO_ASSETS_READY:
+        return xiaomiao_text(XM_TEXT_STATE_READY);
+    case XIAOMIAO_ASSETS_DEGRADED:
+        return xiaomiao_text(XM_TEXT_STATE_DEGRADED);
+    case XIAOMIAO_ASSETS_ERROR:
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
+    case XIAOMIAO_ASSETS_UNINITIALIZED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    }
+}
+
+static const char *settings_assets_font_state_text(
+    const xiaomiao_font_snapshot_t *snapshot)
+{
+    switch (snapshot->state) {
+    case XIAOMIAO_FONT_READY:
+        return xiaomiao_text(XM_TEXT_STATE_READY);
+    case XIAOMIAO_FONT_FALLBACK:
+        return xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE);
+    case XIAOMIAO_FONT_UNINITIALIZED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    }
+}
+
+static const char *settings_assets_sd_state_text(
+    const xiaomiao_storage_snapshot_t *snapshot)
+{
+    switch (snapshot->state) {
+    case XIAOMIAO_STORAGE_MOUNTED:
+        return xiaomiao_text(XM_TEXT_STATE_MOUNTED);
+    case XIAOMIAO_STORAGE_ERROR:
+        return xiaomiao_text(XM_TEXT_STATE_ERROR);
+    case XIAOMIAO_STORAGE_UNINITIALIZED:
+        return xiaomiao_text(XM_TEXT_STATE_UNINITIALIZED);
+    case XIAOMIAO_STORAGE_UNMOUNTED:
+    default:
+        return xiaomiao_text(XM_TEXT_STATE_UNMOUNTED);
+    }
+}
+
+/*
+ * Resources (migrated Tools Assets page): six aggregated diagnostic rows
+ * from the Assets, Font and Storage Service snapshots. Query only: the
+ * page never mounts anything and shows no file content, physical path
+ * or credential (goal node 15, "Tools -> Assets").
+ */
+static void settings_build_assets(lv_obj_t *content)
+{
+    xiaomiao_assets_snapshot_t assets;
+    xiaomiao_font_snapshot_t font;
+    xiaomiao_storage_snapshot_t storage;
+
+    memset(&assets, 0, sizeof(assets));
+    memset(&font, 0, sizeof(font));
+    memset(&storage, 0, sizeof(storage));
+    xiaomiao_assets_get_snapshot(&assets);
+    xiaomiao_font_service_get_snapshot(&font);
+    xiaomiao_storage_get_snapshot(&storage);
+
+    char partition[SETTINGS_INFO_TEXT_MAX];
+    char total[SETTINGS_INFO_TEXT_MAX];
+    char used[SETTINGS_INFO_TEXT_MAX];
+    char font_state[SETTINGS_INFO_TEXT_MAX];
+    char glyphs[SETTINGS_INFO_TEXT_MAX];
+    char sd_state[SETTINGS_INFO_TEXT_MAX];
+
+    snprintf(partition, sizeof(partition), "%s",
+             settings_assets_state_text(&assets));
+    snprintf(font_state, sizeof(font_state), "%s",
+             settings_assets_font_state_text(&font));
+
+    /*
+     * SD row: a mounted card shows its real capacity in MB (owner
+     * feedback 2026-09-30); anything else shows the plain state word,
+     * so the page never fakes a size and never triggers a mount.
+     */
+    if (storage.state == XIAOMIAO_STORAGE_MOUNTED &&
+        storage.capacity_bytes > 0) {
+        snprintf(sd_state, sizeof(sd_state), "%u MB",
+                 (unsigned)(storage.capacity_bytes / (1024U * 1024U)));
+    }
+    else {
+        snprintf(sd_state, sizeof(sd_state), "%s",
+                 settings_assets_sd_state_text(&storage));
+    }
+
+    if (assets.total_bytes == 0) {
+        snprintf(total, sizeof(total), "-");
+        snprintf(used, sizeof(used), "-");
+    }
+    else {
+        snprintf(total, sizeof(total), "%u KiB",
+                 (unsigned)(assets.total_bytes / 1024U));
+        snprintf(used, sizeof(used), "%u KiB",
+                 (unsigned)(assets.used_bytes / 1024U));
+    }
+
+    if (font.glyph_count == 0) {
+        snprintf(glyphs, sizeof(glyphs), "-");
+    }
+    else {
+        snprintf(glyphs, sizeof(glyphs), "%u", (unsigned)font.glyph_count);
+    }
+
+    const xiaomiao_text_id_t name_ids[] = { XM_TEXT_ASSETS_PARTITION,
+                                            XM_TEXT_ASSETS_TOTAL,
+                                            XM_TEXT_ASSETS_USED,
+                                            XM_TEXT_ASSETS_FONT,
+                                            XM_TEXT_ASSETS_GLYPHS,
+                                            XM_TEXT_ASSETS_SD };
+    const char *values[] = { partition, total, used,
+                             font_state, glyphs, sd_state };
+
+    settings_build_info_page(content, xiaomiao_text(XM_TEXT_SETTINGS_RESOURCES),
+                             name_ids, values,
+                             sizeof(name_ids) / sizeof(name_ids[0]), true);
+}
+
+/* About (migrated Tools page): project, real firmware version, author,
+ * repository. Nothing is loaded from disk or network. */
+static void settings_build_about(lv_obj_t *content)
+{
+    char firmware[SETTINGS_INFO_VALUE_MAX];
+    char text[192];
+
+    settings_firmware_version(firmware, sizeof(firmware));
+    snprintf(text, sizeof(text),
+             "%s: Xiaomiao\n"
+             "%s: %s\n"
+             "%s: ZYoungInc\n"
+             "%s: nbh847/xueersi-idf",
+             xiaomiao_text(XM_TEXT_LABEL_PROJECT),
+             xiaomiao_text(XM_TEXT_LABEL_FIRMWARE), firmware,
+             xiaomiao_text(XM_TEXT_LABEL_AUTHOR),
+             xiaomiao_text(XM_TEXT_LABEL_REPO));
+
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_TOOLS_ABOUT));
+
+    /* Explicit width plus wrapping; four lines at the small line height
+     * fit the 70 px box in both font branches. */
+    lv_obj_t *body = settings_create_label(content, text,
+                                           xiaomiao_font_small(),
+                                           SETTINGS_COLOR_TEXT,
+                                           LV_LABEL_LONG_MODE_WRAP);
+    if (body != NULL) {
+        lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_pos(body, SETTINGS_MENU_X, SETTINGS_MENU_Y0);
+        lv_obj_set_size(body, SETTINGS_MENU_W, 70);
+    }
+
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
+}
+
+static void settings_system_highlight(void)
+{
+    if (s_view != SETTINGS_VIEW_SYSTEM) {
+        return;
+    }
+
+    for (size_t i = 0; i < SETTINGS_SYSTEM_ITEM_COUNT; ++i) {
+        lv_obj_t *row = s_system_items[i];
+        if (row == NULL) {
+            continue;
+        }
+
+        const bool focused = (i == s_system_index);
+        lv_obj_set_style_bg_color(row,
+                                  lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BG
+                                                       : SETTINGS_COLOR_ROW_BG),
+                                  0);
+        lv_obj_set_style_border_color(row,
+                                      lv_color_hex(focused ? SETTINGS_COLOR_FOCUS_BORDER
+                                                           : SETTINGS_COLOR_ROW_BORDER),
+                                      0);
+        lv_obj_set_style_border_width(row, focused ? 2 : 1, 0);
+    }
+}
+
+static void settings_build_system(lv_obj_t *content)
+{
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_SETTINGS_SYSTEM));
+
+    for (size_t i = 0; i < SETTINGS_SYSTEM_ITEM_COUNT; ++i) {
+        const int32_t y = SETTINGS_MENU_Y0 + (int32_t)i * SETTINGS_MENU_STEP;
+
+        lv_obj_t *row = lv_obj_create(content);
+        if (row == NULL) {
+            ESP_LOGW(TAG, "system row allocation failed");
+            continue;
+        }
+        lv_obj_remove_style_all(row);
+        lv_obj_set_pos(row, SETTINGS_MENU_X, y);
+        lv_obj_set_size(row, SETTINGS_MENU_W, SETTINGS_MENU_H);
+        lv_obj_set_style_radius(row, 3, 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        /* Decoration only: the root below stays the single focus object. */
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t *label = settings_create_label(row,
+                                                xiaomiao_text(s_system_label_ids[i]),
+                                                xiaomiao_font_small(),
+                                                SETTINGS_COLOR_TITLE,
+                                                LV_LABEL_LONG_MODE_DOTS);
+        if (label != NULL) {
+            lv_obj_set_size(label, SETTINGS_MENU_W - 16, 16);
+            lv_obj_align(label, LV_ALIGN_LEFT_MID, 8, 0);
+        }
+
+        s_system_items[i] = row;
+    }
+
+    settings_system_highlight();
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_A_SELECT_B_BACK));
 }
 
 /*
@@ -632,10 +1081,13 @@ static void settings_build_wifi(lv_obj_t *content)
 
     settings_create_page_title(content, xiaomiao_text(XM_TEXT_MENU_WIFI));
 
+    /* The status row opens the connection details page, so it joins the
+     * focusable rows (2026-09-30 reorganization, decision 2). */
     lv_obj_t *status_value = NULL;
-    (void)settings_wifi_row(content, xiaomiao_text(XM_TEXT_LABEL_STATUS),
-                            SETTINGS_WIFI_ROW_Y0, SETTINGS_WIFI_STATUS_VALUE_X,
-                            &status_value);
+    s_wifi_rows[SETTINGS_WIFI_ROW_STATUS] =
+        settings_wifi_row(content, xiaomiao_text(XM_TEXT_LABEL_STATUS),
+                          SETTINGS_WIFI_ROW_Y0, SETTINGS_WIFI_STATUS_VALUE_X,
+                          &status_value);
     if (status_value != NULL) {
         const char *text = xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE);
         uint32_t color = SETTINGS_COLOR_WARN;
@@ -821,8 +1273,12 @@ static void settings_show_view(settings_view_t view)
     for (size_t i = 0; i < SETTINGS_MENU_ITEM_COUNT; ++i) {
         s_menu_items[i] = NULL;
     }
+    for (size_t i = 0; i < SETTINGS_SYSTEM_ITEM_COUNT; ++i) {
+        s_system_items[i] = NULL;
+    }
     for (size_t i = 0; i < SETTINGS_WIFI_ROW_COUNT; ++i) {
         s_wifi_rows[i] = NULL;
+        s_wifi_detail_values[i] = NULL;
     }
     s_wifi_message = NULL;
     s_prov_line_ssid = NULL;
@@ -843,6 +1299,10 @@ static void settings_show_view(settings_view_t view)
         settings_build_wifi_provisioning(s_content);
         settings_wifi_prov_refresh();
         break;
+    case SETTINGS_VIEW_WIFI_DETAILS:
+        s_wifi_refresh_ticks = 0;
+        settings_build_wifi_details(s_content);
+        break;
     case SETTINGS_VIEW_DISPLAY:
         /* Hardware fact, not a missing setting: the backlight is wired
          * to VCC, so there is no brightness to store or restore. */
@@ -861,6 +1321,18 @@ static void settings_show_view(settings_view_t view)
         break;
     case SETTINGS_VIEW_SYSTEM:
         settings_build_system(s_content);
+        break;
+    case SETTINGS_VIEW_SYSTEM_INFO:
+        settings_build_system_info(s_content);
+        break;
+    case SETTINGS_VIEW_ASSETS:
+        settings_build_assets(s_content);
+        break;
+    case SETTINGS_VIEW_CONFIG:
+        settings_build_config(s_content);
+        break;
+    case SETTINGS_VIEW_ABOUT:
+        settings_build_about(s_content);
         break;
     }
 
@@ -989,6 +1461,11 @@ static void settings_wifi_forget(void)
 static void settings_wifi_activate(void)
 {
     switch (s_wifi_index) {
+    case SETTINGS_WIFI_ROW_STATUS:
+        /* Fresh snapshot on entry; the page refreshes while open. */
+        settings_set_wifi_message("");
+        settings_show_view(SETTINGS_VIEW_WIFI_DETAILS);
+        break;
     case SETTINGS_WIFI_ROW_AUTO:
         settings_wifi_toggle_auto_connect();
         break;
@@ -999,6 +1476,47 @@ static void settings_wifi_activate(void)
         s_wifi_mode = SETTINGS_WIFI_CONFIRM_FORGET;
         settings_set_wifi_message(xiaomiao_text(XM_TEXT_SETTINGS_MSG_PRESS_CONFIRM));
         settings_show_view(SETTINGS_VIEW_WIFI);
+        break;
+    default:
+        break;
+    }
+}
+
+static void settings_system_move(int step)
+{
+    if (step < 0) {
+        if (s_system_index == 0) {
+            return;
+        }
+        s_system_index--;
+    }
+    else {
+        if (s_system_index + 1 >= SETTINGS_SYSTEM_ITEM_COUNT) {
+            return;
+        }
+        s_system_index++;
+    }
+
+    settings_system_highlight();
+    /* Down move: the old row was above, so the band enters at the top. */
+    settings_band_start(s_system_items[s_system_index], step > 0,
+                        SETTINGS_MENU_H);
+}
+
+static void settings_system_activate(void)
+{
+    switch (s_system_index) {
+    case SETTINGS_SYSTEM_ITEM_INFO:
+        settings_show_view(SETTINGS_VIEW_SYSTEM_INFO);
+        break;
+    case SETTINGS_SYSTEM_ITEM_ASSETS:
+        settings_show_view(SETTINGS_VIEW_ASSETS);
+        break;
+    case SETTINGS_SYSTEM_ITEM_CONFIG:
+        settings_show_view(SETTINGS_VIEW_CONFIG);
+        break;
+    case SETTINGS_SYSTEM_ITEM_ABOUT:
+        settings_show_view(SETTINGS_VIEW_ABOUT);
         break;
     default:
         break;
@@ -1041,7 +1559,10 @@ static void settings_wifi_key(uint32_t key)
 /*
  * One physical B press moves exactly one level. The first ESC event of a
  * press latches, every repeat LVGL sends while B is held is dropped, and
- * the timer clears the latch once the key is released (goal decision 10).
+ * the timer clears the latch once the key is released (goal decision
+ * 10). Each view names its own parent, so detail pages exit to their
+ * submenu, submenus to the top menu, and only the top menu defers the
+ * App close (2026-09-30 reorganization, decision 6).
  */
 static void settings_handle_escape(void)
 {
@@ -1057,6 +1578,22 @@ static void settings_handle_escape(void)
                                                     ? XM_TEXT_SETTINGS_MSG_SETUP_CANCELLED
                                                     : XM_TEXT_SETTINGS_MSG_SETUP_STOP_FAILED));
         settings_show_view(SETTINGS_VIEW_WIFI);
+        return;
+    }
+
+    if (s_view == SETTINGS_VIEW_WIFI_DETAILS) {
+        /* Reopening the Wi-Fi list rebuilds it with a fresh snapshot and
+         * restores the status row focus (s_wifi_index is untouched). */
+        settings_show_view(SETTINGS_VIEW_WIFI);
+        return;
+    }
+
+    if (s_view == SETTINGS_VIEW_SYSTEM_INFO ||
+        s_view == SETTINGS_VIEW_ASSETS ||
+        s_view == SETTINGS_VIEW_CONFIG ||
+        s_view == SETTINGS_VIEW_ABOUT) {
+        /* The System submenu keeps its focus (s_system_index). */
+        settings_show_view(SETTINGS_VIEW_SYSTEM);
         return;
     }
 
@@ -1092,8 +1629,27 @@ static void settings_key_cb(lv_event_t *event)
         return;
     case SETTINGS_VIEW_MENU:
         break;
+    case SETTINGS_VIEW_SYSTEM:
+        switch (key) {
+        case LV_KEY_UP:
+            settings_system_move(-1);
+            break;
+        case LV_KEY_DOWN:
+            settings_system_move(1);
+            break;
+        case LV_KEY_ENTER:
+            settings_system_activate();
+            break;
+        case LV_KEY_ESC:
+            settings_handle_escape();
+            break;
+        default:
+            /* Left and right have no meaning inside a single-column menu. */
+            break;
+        }
+        return;
     default:
-        /* Status pages only accept B; arrows and A do nothing. */
+        /* Detail pages only accept B; arrows and A do nothing. */
         if (key == LV_KEY_ESC) {
             settings_handle_escape();
         }
@@ -1135,15 +1691,21 @@ static void settings_b_release_timer_cb(lv_timer_t *timer)
     }
 
     /*
-     * The provisioning page shows live progress. The refresh rides on
-     * the timer that already exists, so no second timer is created and
-     * nothing is left behind when the App closes (goal node 10,
-     * checkpoint 4).
+     * The provisioning page and the connection details show live state.
+     * The refresh rides on the timer that already exists, so no second
+     * timer is created and nothing is left behind when the App closes
+     * (goal node 10, checkpoint 4).
      */
-    if (s_view == SETTINGS_VIEW_WIFI_PROVISIONING) {
+    if (s_view == SETTINGS_VIEW_WIFI_PROVISIONING ||
+        s_view == SETTINGS_VIEW_WIFI_DETAILS) {
         if (++s_wifi_refresh_ticks >= SETTINGS_WIFI_REFRESH_TICKS) {
             s_wifi_refresh_ticks = 0;
-            settings_wifi_prov_refresh();
+            if (s_view == SETTINGS_VIEW_WIFI_PROVISIONING) {
+                settings_wifi_prov_refresh();
+            }
+            else {
+                settings_wifi_details_apply();
+            }
         }
     }
 
@@ -1155,6 +1717,108 @@ static void settings_b_release_timer_cb(lv_timer_t *timer)
                      esp_err_to_name(err), (unsigned)err);
         }
     }
+}
+
+/*
+ * ------------------------------------------------------------------
+ * Wi-Fi connection details (2026-09-30 reorganization, CP2)
+ * ------------------------------------------------------------------
+ * The read-only page migrated from Tools: status, SSID, signal and
+ * IPv4 from the Wi-Fi Service snapshot. It reads a fresh snapshot on
+ * entry and refreshes once per second while open through the shared
+ * 20 ms timer. A disconnected station shows no address and no signal
+ * from an earlier link (goal node 10, "State model").
+ */
+
+/* Names for the four signal levels of the goal's table. */
+static const char *settings_wifi_level_text(uint8_t level)
+{
+    switch (level) {
+    case 4:
+        return xiaomiao_text(XM_TEXT_LEVEL_STRONG);
+    case 3:
+        return xiaomiao_text(XM_TEXT_LEVEL_GOOD);
+    case 2:
+        return xiaomiao_text(XM_TEXT_LEVEL_FAIR);
+    case 1:
+        return xiaomiao_text(XM_TEXT_LEVEL_WEAK);
+    default:
+        return "-";
+    }
+}
+
+static void settings_wifi_details_apply(void)
+{
+    xiaomiao_wifi_snapshot_t snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
+    const esp_err_t err = xiaomiao_wifi_get_snapshot(&snapshot);
+
+    char status[SETTINGS_WIFI_STATUS_MAX];
+    char ssid[SETTINGS_WIFI_SSID_MAX];
+    char signal[SETTINGS_WIFI_SIGNAL_MAX];
+    char ip[SETTINGS_WIFI_IP_MAX];
+
+    if (err != ESP_OK) {
+        snprintf(status, sizeof(status), "%s",
+                 xiaomiao_text(XM_TEXT_STATE_UNAVAILABLE));
+        snprintf(ssid, sizeof(ssid), "-");
+        snprintf(signal, sizeof(signal), "-");
+        snprintf(ip, sizeof(ip), "-");
+    }
+    else {
+        snprintf(status, sizeof(status), "%s", settings_wifi_state_text(&snapshot));
+
+        if (snapshot.state == XIAOMIAO_WIFI_CONNECTED) {
+            snprintf(ssid, sizeof(ssid), "%s",
+                     (snapshot.ssid[0] != '\0') ? snapshot.ssid : "-");
+            snprintf(signal, sizeof(signal), "%d dBm / %s", (int)snapshot.rssi,
+                     settings_wifi_level_text(snapshot.signal_level));
+            snprintf(ip, sizeof(ip), IPSTR, IP2STR(&snapshot.ipv4));
+        }
+        else {
+            /* No address and no signal from an earlier link. */
+            snprintf(ssid, sizeof(ssid), "-");
+            snprintf(signal, sizeof(signal), "-");
+            snprintf(ip, sizeof(ip), "-");
+        }
+    }
+
+    const char *const values[SETTINGS_WIFI_ROW_COUNT] = { status, ssid, signal,
+                                                          ip };
+    for (size_t i = 0; i < SETTINGS_WIFI_ROW_COUNT; ++i) {
+        if (s_wifi_detail_values[i] != NULL) {
+            lv_label_set_text(s_wifi_detail_values[i], values[i]);
+        }
+    }
+}
+
+static void settings_build_wifi_details(lv_obj_t *content)
+{
+    settings_create_page_title(content, xiaomiao_text(XM_TEXT_WIFI_DETAILS));
+
+    const xiaomiao_text_id_t name_ids[SETTINGS_WIFI_ROW_COUNT] = {
+        XM_TEXT_LABEL_STATUS, XM_TEXT_LABEL_SSID, XM_TEXT_LABEL_SIGNAL,
+        XM_TEXT_LABEL_IP
+    };
+
+    for (size_t i = 0; i < SETTINGS_WIFI_ROW_COUNT; ++i) {
+        const int32_t y = SETTINGS_INFO_Y0 + (int32_t)i * SETTINGS_INFO_STEP;
+
+        settings_place_label(content, xiaomiao_text(name_ids[i]),
+                             xiaomiao_font_small(), SETTINGS_COLOR_TEXT,
+                             SETTINGS_INFO_NAME_X, y, SETTINGS_INFO_NAME_W,
+                             SETTINGS_INFO_H, LV_TEXT_ALIGN_LEFT);
+        s_wifi_detail_values[i] =
+            settings_place_label(content, "-", xiaomiao_font_small(),
+                                 SETTINGS_COLOR_TITLE, SETTINGS_INFO_VAL_X, y,
+                                 SETTINGS_INFO_VAL_W, SETTINGS_INFO_H,
+                                 LV_TEXT_ALIGN_RIGHT);
+    }
+
+    settings_create_footer(content, xiaomiao_text(XM_TEXT_HINT_B_BACK));
+
+    /* Entering the page always shows a fresh read, not a cached one. */
+    settings_wifi_details_apply();
 }
 
 static lv_indev_t *settings_find_keypad(void)
@@ -1235,6 +1899,7 @@ static void settings_open(void)
     s_keypad = keypad;
     s_menu_index = 0;
     s_wifi_index = 0;
+    s_system_index = 0;
     s_wifi_mode = SETTINGS_WIFI_LIST;
     s_wifi_refresh_ticks = 0;
     settings_set_wifi_message("");
@@ -1273,8 +1938,12 @@ static void settings_close(void)
     for (size_t i = 0; i < SETTINGS_MENU_ITEM_COUNT; ++i) {
         s_menu_items[i] = NULL;
     }
+    for (size_t i = 0; i < SETTINGS_SYSTEM_ITEM_COUNT; ++i) {
+        s_system_items[i] = NULL;
+    }
     for (size_t i = 0; i < SETTINGS_WIFI_ROW_COUNT; ++i) {
         s_wifi_rows[i] = NULL;
+        s_wifi_detail_values[i] = NULL;
     }
     s_wifi_message = NULL;
     s_prov_line_ssid = NULL;
@@ -1287,6 +1956,7 @@ static void settings_close(void)
     s_view = SETTINGS_VIEW_MENU;
     s_menu_index = 0;
     s_wifi_index = 0;
+    s_system_index = 0;
     s_wifi_mode = SETTINGS_WIFI_LIST;
     s_wifi_refresh_ticks = 0;
     s_b_latched = false;
