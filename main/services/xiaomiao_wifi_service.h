@@ -5,8 +5,11 @@
  * start, scan, connect, disconnect, back-off reconnect, the temporary
  * SoftAP provisioning session and the credential store. Apps and the
  * Framework only call this interface; no other firmware file calls
- * `esp_wifi_*`, `esp_netif_*`, the HTTP server or the credential NVS
- * key (goal node 10, "Architecture").
+ * `esp_wifi_*`, the generic `esp_netif_*` interfaces, the HTTP server
+ * or the credential NVS key (goal node 10, "Architecture"). The single
+ * exception is the Time Service, which may call the SNTP-specific
+ * `esp_netif_sntp_*` interfaces; it owns SNTP and system-time
+ * synchronization (goal 20261001-1657).
  *
  * The Service is asynchronous by design: init() brings the stack up and
  * returns without waiting for a scan, an association or a DHCP lease, so

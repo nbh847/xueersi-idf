@@ -60,6 +60,12 @@ CONFIG_ESP_WIFI_11KV_SUPPORT=n
 CONFIG_ESP_WIFI_MBO_SUPPORT=n
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 
+# Launcher network clock (goal 20261001-1657). Two candidate NTP
+# servers (ntp.aliyun.com, pool.ntp.org) and a 1 h re-sync interval;
+# the service is the only SNTP consumer.
+CONFIG_LWIP_SNTP_MAX_SERVERS=2
+CONFIG_LWIP_SNTP_UPDATE_DELAY=3600000
+
 # The Wi-Fi stack did not fit the default 1 MB app partition (the pre-Wi-Fi
 # build was already 702 KB), and the 1500 KB interim slot left only 141 KB
 # once Wi-Fi was in. The project now owns its layout in `partitions.csv`:

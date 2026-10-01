@@ -6,6 +6,18 @@
 
 ## 施工记录
 
+- 2026-10-01 19:49 -- 联网时钟接手收尾：复核实际源码与人工验收记录，重新编译当前 Service 的 main／bootfail 宿主检查均 PASS（ASan／UBSan 无报错）；修正设计旧口径及证据范围，不改固件、不重复构建烧录。→ `goals/20261001-1657-launcher-network-clock.md`
+
+- 2026-10-01 18:21 -- 联网时钟收口：用户确认构建、烧录及实机场景「都确认过了，没问题」（口头确认，未附串口日志或照片；英文回退、服务器切换实网证据与 24 小时过期长时观察以宿主／软件检查覆盖）；CP5 文档同步 README、项目概览、ROADMAP、设计文档与本 Goal，`git diff --check` 干净。→ `goals/20261001-1657-launcher-network-clock.md`
+
+- 2026-10-01 17:49 -- 联网时钟实施完成（`/goal` 授权）：新增 Time Service（SNTP 唯一所有者）、Launcher 标题替换为 `YYYY-MM-DD HH:MM`、启动链集成与 SNTP 可复现配置；对照 release/v6.1 核对 SNTP API／回调顺序／Kconfig 与字体宽度；宿主检查 `main`／`bootfail` 两场景约 60 项断言 PASS（ASan／UBSan 无报错），修复网络恢复不重建实例与离线 create／destroy 抖动两个缺陷；`git diff --check` 干净。固件未构建未烧录，CP4 人工实机验收与 CP5 文档收口未执行。→ `goals/20261001-1657-launcher-network-clock.md`
+
+- 2026-10-01 16:57 -- 用户接受联网时钟设计，生成 CP0～CP5 施工清单、修改边界及软件／人工验收要求；仅文档，运行时 Goal 未启动，固件未实施。→ `goals/20261001-1657-launcher-network-clock.md`
+
+- 2026-10-01 16:53 -- 用户确认 Launcher 单行完整显示 YYYY-MM-DD HH:MM，设计同步输出缓冲、Wi-Fi 避让与字体宽度约束、日期边界验收；固件未实施。→ `goals/20261001-1634-launcher-network-clock-design.md`
+
+- 2026-10-01 16:34 -- 交付 Launcher 联网时钟设计：独立 Time Service、北京时间 HH:MM、未同步留空、离线有效期与 UI 生命周期方案；源码与官方 6.1 SNTP 接口核对，固件未实施、实网与实机未验证。→ `goals/20261001-1634-launcher-network-clock-design.md`
+
 - 2026-10-01 16:22 -- 空闲待机接手收口：负责人确认构建、烧录与实机测试全部通过；真实源码状态机及配置迁移 10 步宿主复核 PASS，同步项目文档。口头验收无新日志／照片，独立自测与量化失败路径证据边界保留。→ `goals/20261001-1449-screen-idle.md`
 
 - 2026-10-01 16:18 -- 用户确认息屏设置两轮 UI 调整（Display 菜单式结构、删除背光说明字样）「没问题了」；口头确认，未附截图或日志。固件整体仍未构建、烧录或实机验收。→ `goals/20261001-1449-screen-idle.md`

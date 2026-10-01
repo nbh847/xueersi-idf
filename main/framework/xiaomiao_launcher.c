@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "esp_log.h"
 #include "xiaomiao_app.h"
@@ -9,6 +10,7 @@
 #include "xiaomiao_i18n.h"
 #include "xiaomiao_icons.h"
 #include "xiaomiao_navigation.h"
+#include "services/xiaomiao_time_service.h"
 
 static const char TAG[] = "launcher";
 
@@ -22,6 +24,16 @@ static const char TAG[] = "launcher";
 #define LAUNCHER_TITLE_Y      2
 #define LAUNCHER_TITLE_W      150
 #define LAUNCHER_TITLE_H      14
+/*
+ * Network clock strip (goal 20261001-1657): the brand label is replaced
+ * by the date-time read-out. 131 px wide keeps a >= 4 px gap to the
+ * global Wi-Fi icon (x = 140); 16 px tall keeps the label above the
+ * card grid (y = 19) with the 14 px fallback line height.
+ */
+#define LAUNCHER_CLOCK_X      5
+#define LAUNCHER_CLOCK_Y      2
+#define LAUNCHER_CLOCK_W      131
+#define LAUNCHER_CLOCK_H      16
 #define LAUNCHER_CARD_W       74
 #define LAUNCHER_CARD_H       42
 #define LAUNCHER_CARD_X0      4
@@ -76,6 +88,19 @@ static lv_obj_t *s_empty;
 static launcher_slot_t s_slots[XIAOMIAO_LAUNCHER_PER_PAGE];
 static size_t s_focus;
 static lv_obj_t *s_sweep_band;
+
+/*
+ * Network clock (goal 20261001-1657). The label is a child of the
+ * Launcher root - never the top layer - so Apps cover it naturally and
+ * the standby overlay hides it. One 1 s timer refreshes it; object
+ * updates only happen when validity or the string actually changed.
+ * The service lifecycle is independent of the Launcher: a failed or
+ * uninitialized Time Service only means an empty strip.
+ */
+static lv_obj_t *s_clock_label;
+static lv_timer_t *s_clock_timer;
+static bool s_clock_valid;
+static char s_clock_text[XIAOMIAO_TIME_DATETIME_BUF];
 
 static bool launcher_app_open(void)
 {
@@ -542,6 +567,74 @@ static void launcher_build_slot(lv_obj_t *root, size_t slot, int x, int y)
     lv_obj_align(entry->name, LV_ALIGN_BOTTOM_MID, 0, -3);
 }
 
+/*
+ * Read the Time Service snapshot and apply only real changes. An
+ * invalid or missing time hides the label; it never falls back to
+ * brand text, "--:--" or a stale date.
+ */
+static void launcher_clock_apply(const xiaomiao_time_snapshot_t *snap)
+{
+    if (s_clock_label == NULL) {
+        return;
+    }
+
+    const bool changed =
+        (snap->valid != s_clock_valid) ||
+        (snap->valid && strcmp(snap->datetime, s_clock_text) != 0);
+    if (!changed) {
+        return;
+    }
+
+    if (snap->valid) {
+        lv_label_set_text(s_clock_label, snap->datetime);
+        lv_obj_clear_flag(s_clock_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_clock_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_clock_valid = snap->valid;
+    memcpy(s_clock_text, snap->datetime, sizeof(s_clock_text));
+}
+
+static void launcher_clock_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    xiaomiao_time_snapshot_t snap;
+    /* Every failure path leaves a cleared, invalid snapshot. */
+    (void)xiaomiao_time_get_snapshot(&snap);
+    launcher_clock_apply(&snap);
+}
+
+static void launcher_build_clock(lv_obj_t *root)
+{
+    s_clock_valid = false;
+    s_clock_text[0] = '\0';
+
+    s_clock_label = lv_label_create(root);
+    if (s_clock_label == NULL) {
+        /* A failed allocation only costs the clock strip. */
+        return;
+    }
+    lv_obj_set_style_text_font(s_clock_label, xiaomiao_font_small(), 0);
+    lv_obj_set_style_text_color(s_clock_label,
+                                lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
+    lv_obj_set_pos(s_clock_label, LAUNCHER_CLOCK_X, LAUNCHER_CLOCK_Y);
+    lv_obj_set_size(s_clock_label, LAUNCHER_CLOCK_W, LAUNCHER_CLOCK_H);
+    lv_label_set_text(s_clock_label, "");
+    lv_obj_add_flag(s_clock_label, LV_OBJ_FLAG_HIDDEN);
+
+    /* Show a valid time immediately instead of waiting one period. */
+    xiaomiao_time_snapshot_t snap;
+    (void)xiaomiao_time_get_snapshot(&snap);
+    launcher_clock_apply(&snap);
+
+    s_clock_timer = lv_timer_create(launcher_clock_timer_cb, 1000, NULL);
+    if (s_clock_timer == NULL) {
+        /* Without the timer the label would freeze; drop the clock. */
+        lv_obj_delete(s_clock_label);
+        s_clock_label = NULL;
+    }
+}
+
 static void launcher_build_ui(lv_obj_t *root)
 {
     static const int column_x[XIAOMIAO_LAUNCHER_COLUMNS] = { LAUNCHER_CARD_X0,
@@ -549,13 +642,10 @@ static void launcher_build_ui(lv_obj_t *root)
     static const int row_y[XIAOMIAO_LAUNCHER_ROWS] = { LAUNCHER_CARD_Y0,
                                                        LAUNCHER_CARD_Y1 };
 
-    lv_obj_t *title = lv_label_create(root);
-    lv_obj_set_style_text_font(title, xiaomiao_font_small(), 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(LAUNCHER_COLOR_CHROME), 0);
-    lv_obj_set_pos(title, LAUNCHER_TITLE_X, LAUNCHER_TITLE_Y);
-    lv_obj_set_size(title, LAUNCHER_TITLE_W, LAUNCHER_TITLE_H);
-    /* Brand name: stays "Xiaomiao" in both languages. */
-    lv_label_set_text(title, "Xiaomiao");
+    /* The brand label is replaced by the network clock strip; when the
+     * Time Service has no valid time the strip stays empty (goal
+     * 20261001-1657). */
+    launcher_build_clock(root);
 
     for (size_t i = 0; i < XIAOMIAO_LAUNCHER_PER_PAGE; ++i) {
         launcher_build_slot(root, i, column_x[i % XIAOMIAO_LAUNCHER_COLUMNS],
@@ -635,9 +725,14 @@ esp_err_t xiaomiao_launcher_destroy(void)
     }
 
     /* Removing from the group and deleting the root releases every
-     * child card, label and status object in one step. The sweep band
-     * and its animation are removed first so no callback can fire on a
-     * deleted tree. */
+     * child card, label and status object in one step. The clock timer
+     * and the sweep band are removed first so no callback can fire on
+     * a deleted tree (goal 20261001-1657: timer, then objects, then
+     * pointers). */
+    if (s_clock_timer != NULL) {
+        lv_timer_delete(s_clock_timer);
+        s_clock_timer = NULL;
+    }
     launcher_band_stop();
     lv_group_remove_obj(s_root);
     lv_obj_delete(s_root);
@@ -646,6 +741,9 @@ esp_err_t xiaomiao_launcher_destroy(void)
     s_hint = NULL;
     s_page = NULL;
     s_empty = NULL;
+    s_clock_label = NULL;
+    s_clock_valid = false;
+    s_clock_text[0] = '\0';
     s_focus = 0;
     for (size_t i = 0; i < XIAOMIAO_LAUNCHER_PER_PAGE; ++i) {
         s_slots[i].card = NULL;

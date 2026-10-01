@@ -30,7 +30,8 @@ set(SERVICE_SRCS "services/xiaomiao_settings_service.c"
                  "services/xiaomiao_assets_service.c"
                  "services/xiaomiao_font_service.c"
                  "services/xiaomiao_buzzer_service.c"
-                 "services/xiaomiao_pomodoro_service.c")
+                 "services/xiaomiao_pomodoro_service.c"
+                 "services/xiaomiao_time_service.c")
 
 # Business Apps. The self test builds keep their own test data and never
 # register these descriptions (goal node 5, decision 14).

@@ -76,6 +76,7 @@
 #include "services/xiaomiao_pomodoro_service.h"
 #include "services/xiaomiao_settings_service.h"
 #include "services/xiaomiao_storage_service.h"
+#include "services/xiaomiao_time_service.h"
 #include "services/xiaomiao_wifi_service.h"
 
 #ifndef CONFIG_IDF_TARGET
@@ -2569,6 +2570,9 @@ static void lvgl_task(void *arg)
         hardware_process_timers();
         hardware_test_b_gesture_poll();
         xiaomiao_screen_idle_poll();
+        /* SNTP state machine, internally throttled to 1 Hz (goal
+         * 20261001-1657). */
+        xiaomiao_time_service_poll();
 
         if (lv_tick_elaps(last_update_ms) >= UI_REFRESH_PERIOD_MS) {
             last_update_ms = lv_tick_get();
@@ -2786,6 +2790,18 @@ void app_main(void)
     if (agent_err != ESP_OK) {
         ESP_LOGW(TAG, "Agent service unavailable: %s (0x%x), continuing without PC metrics",
                  esp_err_to_name(agent_err), (unsigned)agent_err);
+    }
+
+    /*
+     * The Time Service owns SNTP and system-time sync (goal
+     * 20261001-1657). It follows the Wi-Fi Service, never waits for a
+     * lease or the first sync, and a failure only costs the Launcher
+     * clock: the boot continues and poll() keeps retrying.
+     */
+    esp_err_t time_err = xiaomiao_time_service_init();
+    if (time_err != ESP_OK) {
+        ESP_LOGW(TAG, "Time service unavailable: %s (0x%x), clock stays empty",
+                 esp_err_to_name(time_err), (unsigned)time_err);
     }
 
     /*
