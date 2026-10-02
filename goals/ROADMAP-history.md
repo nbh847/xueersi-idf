@@ -6,6 +6,10 @@
 
 ## 施工记录
 
+- 2026-10-02 14:08 -- 用户提供真实后台启动输出，确认命令返回终端并通过 1 秒存活检查；后端 HTTP／UDP 就绪及跨系统验证仍无证据。→ `goals/20261002-1402-pc-agent-background.md`
+
+- 2026-10-02 14:04 -- PC Agent 启动脚本改为 nohup 后台运行，日志写入独立 /tmp 私有文件；macOS 隔离替身检查与 Shell／diff 检查通过，真实后端及跨系统未验证。→ `goals/20261002-1402-pc-agent-background.md`
+
 - 2026-10-01 19:49 -- 联网时钟接手收尾：复核实际源码与人工验收记录，重新编译当前 Service 的 main／bootfail 宿主检查均 PASS（ASan／UBSan 无报错）；修正设计旧口径及证据范围，不改固件、不重复构建烧录。→ `goals/20261001-1657-launcher-network-clock.md`
 
 - 2026-10-01 18:21 -- 联网时钟收口：用户确认构建、烧录及实机场景「都确认过了，没问题」（口头确认，未附串口日志或照片；英文回退、服务器切换实网证据与 24 小时过期长时观察以宿主／软件检查覆盖）；CP5 文档同步 README、项目概览、ROADMAP、设计文档与本 Goal，`git diff --check` 干净。→ `goals/20261001-1657-launcher-network-clock.md`

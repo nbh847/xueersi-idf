@@ -14,6 +14,8 @@
 
 ## 当前开发节点
 
+- **PC Agent 后台启动已完成软件验证并取得真实启动输出**（`goals/20261002-1402-pc-agent-background.md`）。`start.sh` 使用 `nohup` 后台运行，输出 PID、独立 `/tmp` 私有日志路径与停止命令；帮助仍同步显示，启动后 1 秒存活检查捕获立即失败。macOS 隔离替身验证与 Shell／diff 静态检查通过；2026-10-02 用户提供启动输出，确认返回终端并通过存活检查。真实后端 HTTP／UDP 就绪、真实端口冲突、关闭终端实测及 Windows／Linux 未验证。
+
 - **已完成：Launcher 联网时钟**（设计 `docs/launcher-network-clock-design.md`；施工 `goals/20261001-1657-launcher-network-clock.md`；设计记录 `goals/20261001-1634-launcher-network-clock-design.md`）。2026-10-01 用户经 `/goal` 授权实施，CP0～CP3 于当日 17:49 完成：新增 Time Service（SNTP 唯一所有者，1 Hz poll、30 秒失败重试、24 小时单调钟有效期、UTC+8 快照），Launcher 左上角 `Xiaomiao` 替换为 `YYYY-MM-DD HH:MM` 标签（131 × 16，无有效时间留空），启动链与主循环集成，`CONFIG_LWIP_SNTP_MAX_SERVERS=2` 与 `CONFIG_LWIP_SNTP_UPDATE_DELAY=3600000` 落入两份可复现配置。宿主检查 `main`／`bootfail` 两场景约 60 项断言 PASS（ASan／UBSan 无报错），并借此修复网络恢复不重建实例与离线 create／destroy 抖动两个缺陷。2026-10-01 18:21 用户确认构建、烧录及实机场景「都确认过了，没问题」（口头确认，未附串口日志或照片；英文回退实机演示、服务器实网切换与 24 小时过期长时观察未单独取证，24 小时边界已有宿主检查）。 2026-10-01 19:49 接手核对实际源码，重新编译当前 Service 的两场景宿主检查 PASS（ASan／UBSan 无报错），设计与证据边界已修正。
 
 - **节点 0～11 与节点 14～15 均已完成并取得人工验收确认。** 节点 14 的项目负责人已确认 ESP-IDF 构建、烧录与 CP5 九个实机场景全部通过（2026-09-22 15:38）；节点 15 的 CP1～CP7 于 2026-09-25 闭环（豁免项见其 Goal 文档）。Agent 未重复执行固件构建、烧录或串口监视。已完成节点的交付内容、验证证据、口径差异与未验证范围见各自施工文档：

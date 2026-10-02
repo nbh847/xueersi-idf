@@ -52,4 +52,24 @@ if ! "$PY" -c "import psutil" 2>/dev/null; then
     "$PY" -m pip install -r requirements.txt
 fi
 
-exec "$PY" monitor.py "$@"
+# Help remains synchronous so argparse can display usage in the terminal.
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) exec "$PY" monitor.py "$@" ;;
+    esac
+done
+
+# mktemp creates a private log; -u flushes Python output without a terminal.
+umask 077
+LOG_FILE="$(mktemp /tmp/xiaomiao-agent.XXXXXX)"
+nohup "$PY" -u monitor.py "$@" >>"$LOG_FILE" 2>&1 </dev/null &
+AGENT_PID=$!
+sleep 1
+if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+    echo "start.sh: agent exited during startup; log: $LOG_FILE" >&2
+    exit 1
+fi
+
+echo "start.sh: agent running in background (PID $AGENT_PID)"
+echo "Log: $LOG_FILE"
+echo "Stop: kill $AGENT_PID"

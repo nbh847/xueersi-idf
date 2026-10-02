@@ -37,6 +37,8 @@ esptool.py --chip esp32 -b 460800 write_flash 0x0 xiaomiao-merged.bin
 bash pc-agent/start.sh                                      # 默认 0.0.0.0:8766
 ```
 
+`start.sh` 使用 `nohup` 在后台运行后端，日志写入每次独立创建的 `/tmp/xiaomiao-agent.*` 文件，启动后输出 PID、日志绝对路径与 `kill <PID>` 停止命令。用 `tail -f <日志绝对路径>` 查看日志；关闭终端后后端继续运行。启动后检查 1 秒内是否退出，立即失败时返回非零并显示日志位置；这不代表 HTTP 已就绪。`--help` 仍在终端显示。重复启动若占用相同端口会失败，修改参数前应先停止旧进程。首次环境创建与依赖安装仍在前台执行。
+
 - API：`GET /api/v1/health`、`GET /api/v1/pc/metrics`、`GET /api/v1/quotas/codex`、`GET /api/v1/quotas/zhipu`；HTTP 只读取后台缓存快照，不在请求路径中现场采集。
 - 额度端点各返回一个服务商的两个窗口（Codex `5H`／`7D`，智谱 `5H`／`1W`），字段为 `label`、`remaining_percent`、`resets_at`、`reset_at_local`（`MM-DD HH:MM`）与 `reset_in_sec`；`status` 区分 `ok`／`auth_required`／`unavailable`／`invalid_data`／`stale`。两家各自 60 秒轮询、180 秒无成功更新标 `stale`，一方失败不影响另一方或 PC 指标。
 - Codex 额度经本机 `codex app-server` 只读查询（先 `account/read` 且 `refreshToken: false`，再读 `account/rateLimits/read`）；智谱额度按已确认顺序只读发现本机 Token（`~/.qclaw/agents/main/agent/models.json` → `~/.claude/settings.json` → 环境变量），只接受 `open.bigmodel.cn` 与 `dev.bigmodel.cn`，按 `TOKENS_LIMIT` 的 `unit=3`→`5H`、`unit=6`→`1W` 映射。凭据只在电脑本机使用，不进入固件、HTTP 响应或日志。
