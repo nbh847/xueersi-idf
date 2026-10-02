@@ -64,6 +64,8 @@ AI 额度 Goal 让它同时服务两个只读额度端点：发现到的 host／
 
 `Screen Idle`（`main/framework/xiaomiao_screen_idle.{h,c}`，空闲待机 Goal 20261001-1449，2026-10-01 实施并取得实机验收确认）是挂在 top layer 的全局待机覆盖层：主循环轮询 64 位单调钟，`screen_idle_minutes` 超时且无键按住时进入待机——全屏纯黑遮住原页面与 Wi-Fi 图标，中央绘制单圈小电视折线（身体 21 点、眼睛两态、双弧嘴两态预计算，天线按 4.8 秒周期绕根部旋转），单一 50 ms LVGL timer 按绝对相位推进并只做对象级重绘；去抖输入边界喂入六键状态，唤醒按键及全部释放前的输入被吞掉（不触发页面动作或 Hardware Test B 手势），进入／退出不调用 App open／close、不切 screen、不改焦点；创建失败清理部分对象并保持原界面可用。
 
+Tools 番茄详情未开始时支持左右七档快切（1／5／15／25／30／45／60 分钟），通过 Settings Service 仅更新专注字段，设置页同步、休息不变；快切锁存由每次 keypad 采样释放，监听随 App open／close 成对注册与移除，箭头与分钟局部光带随页面清理。2026-10-02 已获负责人实机验收确认，证据边界见 `goals/20261002-1753-pomodoro-quick-duration.md`。
+
 ## 两颗 MCU 的边界
 
 - ESP32 端已按 I2C 地址 `0x40` 实现 GD32 探测、LED 寄存器和双电机 PWM 命令，也按 `0x68` 接入 MPU6050。

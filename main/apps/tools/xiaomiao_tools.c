@@ -161,6 +161,9 @@ static lv_indev_t *s_keypad;
 static lv_timer_t *s_b_release_timer;
 static bool s_b_latched;
 static bool s_back_pending;
+static uint32_t s_quick_latched_key;
+static bool s_quick_save_failed;
+static uint32_t s_quick_error_ms;
 
 static view_t s_view;
 static detail_mode_t s_mode;
@@ -171,6 +174,12 @@ static xiaomiao_pomodoro_snapshot_t s_snap;
 static lv_obj_t *s_title;
 static lv_obj_t *s_arc;
 static lv_obj_t *s_min_label;
+static lv_obj_t *s_min_box;
+static lv_obj_t *s_quick_arrow[2];
+static const lv_point_precise_t s_quick_arrow_pts[2][3] = {
+    {{7, 0}, {0, 5}, {7, 10}},
+    {{0, 0}, {7, 5}, {0, 10}},
+};
 static lv_obj_t *s_sec_label;
 static lv_obj_t *s_glass_line;
 static lv_obj_t *s_shine_line[2];
@@ -648,7 +657,19 @@ static void detail_apply(void)
         lv_label_set_text(s_sec_label, text);
     }
 
-    lv_arc_set_value(s_arc, (int)s_snap.progress_percent);
+    if (s_arc != NULL) {
+        lv_arc_set_value(s_arc, (int)s_snap.progress_percent);
+    }
+    for (uint8_t i = 0; i < 2; ++i) {
+        if (s_quick_arrow[i] != NULL) {
+            if (s_snap.state == XIAOMIAO_POMODORO_IDLE) {
+                lv_obj_clear_flag(s_quick_arrow[i], LV_OBJ_FLAG_HIDDEN);
+            }
+            else {
+                lv_obj_add_flag(s_quick_arrow[i], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
 
     hourglass_apply();
 
@@ -656,7 +677,9 @@ static void detail_apply(void)
         lv_obj_add_flag(s_opt[0], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_opt[1], LV_OBJ_FLAG_HIDDEN);
         if (s_footer != NULL) {
-            lv_label_set_text(s_footer, detail_footer_text());
+            lv_label_set_text(s_footer, s_quick_save_failed
+                ? xiaomiao_text(XM_TEXT_SETTINGS_MSG_SAVE_FAILED)
+                : detail_footer_text());
             lv_obj_clear_flag(s_footer, LV_OBJ_FLAG_HIDDEN);
         }
         return;
@@ -730,6 +753,8 @@ static void detail_start_running_phase(void)
 
 static void detail_action(void)
 {
+    tools_band_stop();
+    s_quick_save_failed = false;
     switch (s_mode) {
     case MODE_OPTIONS: {
         /* Options exist only for a paused phase (continue / reset);
@@ -758,6 +783,56 @@ static void detail_action(void)
     }
 
     detail_refresh();
+}
+
+static uint8_t detail_quick_minutes(uint8_t current, int step)
+{
+    static const uint8_t presets[] = {1, 5, 15, 25, 30, 45, 60};
+    const size_t count = sizeof(presets) / sizeof(presets[0]);
+    if (step > 0) {
+        for (size_t i = 0; i < count; ++i) {
+            if (presets[i] > current) {
+                return presets[i];
+            }
+        }
+        return presets[0];
+    }
+    for (size_t i = count; i > 0; --i) {
+        if (presets[i - 1] < current) {
+            return presets[i - 1];
+        }
+    }
+    return presets[count - 1];
+}
+
+static void detail_quick_adjust(uint32_t key)
+{
+    if (s_quick_latched_key == key) {
+        return;
+    }
+    s_quick_latched_key = key;
+    tools_band_stop();
+    xiaomiao_settings_t settings;
+    esp_err_t err = xiaomiao_settings_get(&settings);
+    if (err == ESP_OK) {
+        const uint8_t next = detail_quick_minutes(settings.focus_minutes,
+                                                 key == LV_KEY_RIGHT ? 1 : -1);
+        if (next == settings.focus_minutes) {
+            return;
+        }
+        settings.focus_minutes = next;
+        err = xiaomiao_settings_set(&settings);
+    }
+    s_quick_save_failed = err != ESP_OK;
+    if (s_quick_save_failed) {
+        s_quick_error_ms = lv_tick_get();
+        ESP_LOGW(TAG, "quick focus save failed: %s", esp_err_to_name(err));
+    }
+    detail_refresh();
+    if (!s_quick_save_failed) {
+        tools_band_start_horizontal(s_min_box, key == LV_KEY_RIGHT,
+                                    POMO_DIGIT_W, POMO_DIGIT_H);
+    }
 }
 
 static void detail_move(int step)
@@ -1055,6 +1130,10 @@ static void tools_show_view(view_t view)
     tools_band_stop();
 
     lv_obj_clean(s_content);
+    s_min_box = NULL;
+    s_quick_arrow[0] = NULL;
+    s_quick_arrow[1] = NULL;
+    s_quick_save_failed = false;
 
     if (view == VIEW_MENU) {
         xiaomiao_wifi_indicator_set_visible(true);
@@ -1153,10 +1232,31 @@ static void detail_build(lv_obj_t *content)
         lv_obj_clear_flag(s_arc, LV_OBJ_FLAG_CLICKABLE);
     }
 
-    s_min_label = tools_place_label(content, "25", xiaomiao_font_body(),
-                                    POMO_COLOR_RING, POMO_MIN_X, POMO_DIGIT_Y,
+    s_min_box = lv_obj_create(content);
+    if (s_min_box != NULL) {
+        lv_obj_remove_style_all(s_min_box);
+        lv_obj_set_pos(s_min_box, POMO_MIN_X, POMO_DIGIT_Y);
+        lv_obj_set_size(s_min_box, POMO_DIGIT_W, POMO_DIGIT_H);
+        lv_obj_clear_flag(s_min_box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(s_min_box, LV_OBJ_FLAG_CLICKABLE);
+    }
+    s_min_label = tools_place_label(s_min_box != NULL ? s_min_box : content,
+                                    "25", xiaomiao_font_body(), POMO_COLOR_RING,
+                                    s_min_box != NULL ? 0 : POMO_MIN_X,
+                                    s_min_box != NULL ? 0 : POMO_DIGIT_Y,
                                     POMO_DIGIT_W, POMO_DIGIT_H,
                                     LV_TEXT_ALIGN_CENTER);
+    for (uint8_t i = 0; i < 2; ++i) {
+        s_quick_arrow[i] = lv_line_create(content);
+        if (s_quick_arrow[i] != NULL) {
+            lv_line_set_points(s_quick_arrow[i], s_quick_arrow_pts[i], 3);
+            lv_obj_set_pos(s_quick_arrow[i], i == 0 ? 22 : 131, 59);
+            lv_obj_set_style_line_width(s_quick_arrow[i], 1, 0);
+            lv_obj_set_style_line_color(s_quick_arrow[i],
+                                        lv_color_hex(POMO_COLOR_RING), 0);
+            lv_obj_add_flag(s_quick_arrow[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     s_sec_label = tools_place_label(content, "00", xiaomiao_font_body(),
                                     POMO_COLOR_RING, POMO_SEC_X, POMO_DIGIT_Y,
                                     POMO_DIGIT_W, POMO_DIGIT_H,
@@ -1307,6 +1407,18 @@ static void tools_apply_back(void)
     }
 }
 
+/* LVGL sends the indev KEY event on every keypad sample, including
+ * release samples. Observe it before object key dispatch so a short
+ * release cannot be missed between the App's 20 ms timer ticks. */
+static void tools_keypad_sample_cb(lv_event_t *event)
+{
+    (void)event;
+    if (s_keypad != NULL &&
+        lv_indev_get_state(s_keypad) == LV_INDEV_STATE_RELEASED) {
+        s_quick_latched_key = 0;
+    }
+}
+
 static void tools_key_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_KEY) {
@@ -1314,6 +1426,9 @@ static void tools_key_cb(lv_event_t *event)
     }
 
     const uint32_t key = lv_event_get_key(event);
+    if (key != s_quick_latched_key) {
+        s_quick_latched_key = 0;
+    }
 
     if (key == LV_KEY_ESC) {
         tools_handle_escape();
@@ -1359,7 +1474,13 @@ static void tools_key_cb(lv_event_t *event)
         break;
     case LV_KEY_LEFT:
     case LV_KEY_RIGHT:
-        detail_move((key == LV_KEY_RIGHT) ? 1 : -1);
+        detail_refresh();
+        if (s_snap.state == XIAOMIAO_POMODORO_IDLE) {
+            detail_quick_adjust(key);
+        }
+        else {
+            detail_move((key == LV_KEY_RIGHT) ? 1 : -1);
+        }
         break;
     case LV_KEY_UP:
         /* CP0: the setup entry never pauses or changes the timer. */
@@ -1399,6 +1520,11 @@ static void tools_b_release_timer_cb(lv_timer_t *timer)
      * on its own poll in the main loop, so the page cannot miss a
      * phase end even if this timer never fires. */
     const uint32_t now = lv_tick_get();
+    if (s_quick_save_failed &&
+        (uint32_t)(now - s_quick_error_ms) >= 2000U) {
+        s_quick_save_failed = false;
+        detail_refresh();
+    }
     if ((uint32_t)(now - s_ui_last_ms) >= TOOLS_UI_TICK_MS) {
         s_ui_last_ms = now;
         detail_refresh();
@@ -1484,6 +1610,7 @@ static void tools_open(void)
 
     s_group = group;
     s_keypad = keypad;
+    s_quick_latched_key = 0;
     s_b_latched = false;
     s_back_pending = false;
     s_view = VIEW_MENU;
@@ -1495,6 +1622,7 @@ static void tools_open(void)
     s_flip_frame = -1;
 
     lv_obj_add_event_cb(s_root, tools_key_cb, LV_EVENT_KEY, NULL);
+    lv_indev_add_event_cb(s_keypad, tools_keypad_sample_cb, LV_EVENT_KEY, s_root);
     lv_group_add_obj(s_group, s_root);
     lv_group_focus_obj(s_root);
 
@@ -1520,6 +1648,10 @@ static void tools_close(void)
     /* Every exit path restores the global indicator; close re-checks
      * so even an allocation-failure detour cannot leave it hidden. */
     xiaomiao_wifi_indicator_set_visible(true);
+    if (s_keypad != NULL) {
+        lv_indev_remove_event_cb_with_user_data(s_keypad,
+                                                tools_keypad_sample_cb, s_root);
+    }
 
     if (s_root != NULL && s_group != NULL) {
         lv_group_remove_obj(s_root);
@@ -1532,6 +1664,11 @@ static void tools_close(void)
     s_title = NULL;
     s_arc = NULL;
     s_min_label = NULL;
+    s_min_box = NULL;
+    s_quick_arrow[0] = NULL;
+    s_quick_arrow[1] = NULL;
+    s_quick_latched_key = 0;
+    s_quick_save_failed = false;
     s_sec_label = NULL;
     s_glass_line = NULL;
     s_shine_line[0] = NULL;
