@@ -101,3 +101,8 @@ GD32 使用 Keil 工程 `GD32_firmware/Project/MDK-ARM/cdc_acm.uvprojx`，目标
 节点 10“Wi-Fi Service”已于 2026-09-21 完成并由项目负责人确认人工构建、烧录与手动测试全部通过。逐项证据覆盖启动不阻塞、扫描、SoftAP + DNS + HTTP 网页配网、取得 IPv4 后再提交凭据、错误凭据保护、换网与跨断电持久化、自动连接、退避重连、10 分钟超时、Forget network、Settings／Tools 页面、全局图标和既有 App 回归；新增确认未附日志的项目在 Goal 中明确标记为人工确认。凭据由 Service 以版本化 blob 保存到 `xiaomiao/wifi_creds`，Wi-Fi 驱动全程使用 `WIFI_STORAGE_RAM`。加入 Wi-Fi 后项目改用自定义 `partitions.csv`：NVS 与 `phy_init` 的大小和偏移保持不变，factory app 扩到 2 MB，并预留 1.5 MB `assets` 分区供节点 15 使用。实现、验证证据、已接受取舍与仅静态复核的故障路径见 `goals/20260920-2210-wifi-service.md`。
 
 节点 11“PC Monitor 通信”已于 2026-09-21 完成首版。统一 PC Agent、固件 Agent Service、HTTP API 与 PC Monitor 实时指标刷新已实现；首版使用固定 IPv4，相关人工构建、烧录及 CP5 手动场景由项目负责人确认通过。局域网动态发现为后续补充，已完成首个局域网发现、指标显示和 Agent 停止／恢复的目标板验收；更换 Wi-Fi 环境后的重新发现待验证。原首版实现和验证记录见 `goals/20260921-1238-pc-monitor-communication.md`，动态发现记录见 `goals/20260927-1549-agent-service-discovery.md`。
+
+
+## 番茄计时取消
+
+专注与休息运行页短按 A 在释放后暂停；持续按住 A 达到 360 ms 后，银白星芒沿圆环顺时针燃烧 2 秒。中途松开则计时继续，完成后回到未开始的专注准备页，已保存的专注／休息时长及其他配置保持。燃烧只覆盖画面，不改变真实倒计时。暂停页仍可选择「继续／重置」。交互设计见 `docs/pomodoro-hold-cancel-design.md`，施工记录见 `goals/20261002-1841-pomodoro-hold-cancel.md`。

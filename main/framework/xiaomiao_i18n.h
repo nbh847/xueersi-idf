@@ -323,6 +323,8 @@ typedef enum {
     XM_TEXT_HINT_A_SAVE_B_BACK,
     XM_TEXT_SETTINGS_SCREEN_IDLE,
 
+    XM_TEXT_POMO_HINT_RELEASE,
+
     XM_TEXT_COUNT
 } xiaomiao_text_id_t;
 

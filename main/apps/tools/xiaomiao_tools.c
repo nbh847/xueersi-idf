@@ -45,11 +45,13 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
 #include "framework/xiaomiao_fonts.h"
 #include "framework/xiaomiao_i18n.h"
 #include "framework/xiaomiao_navigation.h"
+#include "framework/xiaomiao_screen_idle.h"
 #include "framework/xiaomiao_wifi_indicator.h"
 #include "services/xiaomiao_buzzer_service.h"
 #include "services/xiaomiao_pomodoro_service.h"
@@ -165,6 +167,17 @@ static uint32_t s_quick_latched_key;
 static bool s_quick_save_failed;
 static uint32_t s_quick_error_ms;
 
+#define POMO_HOLD_US 360000LL
+#define POMO_BURN_US 2000000LL
+static bool s_a_consumed;
+static bool s_a_pending;
+static bool s_a_burning;
+static int64_t s_a_started_us;
+static int64_t s_burn_started_us;
+static uint32_t s_burn_ms;
+static xiaomiao_pomodoro_state_t s_a_stage;
+static lv_obj_t *s_burn_layer;
+
 static view_t s_view;
 static detail_mode_t s_mode;
 static uint8_t s_option_index;
@@ -224,6 +237,8 @@ static lv_obj_t *tools_create_label(lv_obj_t *parent, const char *text,
 
 static void tools_build_menu(lv_obj_t *content);
 static void tools_show_view(view_t view);
+static void detail_refresh(void);
+static void detail_hold_abort(void);
 
 static lv_obj_t *tools_create_label(lv_obj_t *parent, const char *text,
                                     const lv_font_t *font, uint32_t color,
@@ -679,6 +694,7 @@ static void detail_apply(void)
         if (s_footer != NULL) {
             lv_label_set_text(s_footer, s_quick_save_failed
                 ? xiaomiao_text(XM_TEXT_SETTINGS_MSG_SAVE_FAILED)
+                : s_a_burning ? xiaomiao_text(XM_TEXT_POMO_HINT_RELEASE)
                 : detail_footer_text());
             lv_obj_clear_flag(s_footer, LV_OBJ_FLAG_HIDDEN);
         }
@@ -783,6 +799,178 @@ static void detail_action(void)
     }
 
     detail_refresh();
+}
+
+/* The confirmation never owns the timer deadline or preferences. */
+static bool detail_running(xiaomiao_pomodoro_state_t state)
+{
+    return state == XIAOMIAO_POMODORO_FOCUS_RUNNING ||
+           state == XIAOMIAO_POMODORO_BREAK_RUNNING;
+}
+
+static void detail_hold_abort(void)
+{
+    s_a_pending = false;
+    s_a_burning = false;
+    s_burn_ms = 0;
+    if (s_burn_layer != NULL) {
+        lv_obj_delete(s_burn_layer);
+        s_burn_layer = NULL;
+    }
+}
+
+static void spark_line(lv_layer_t *layer, float x, float y, float dx,
+                       float dy, uint32_t color, uint8_t opa)
+{
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.p1.x = (int32_t)lroundf(x);
+    line.p1.y = (int32_t)lroundf(y);
+    line.p2.x = (int32_t)lroundf(x + dx);
+    line.p2.y = (int32_t)lroundf(y + dy);
+    line.width = 1;
+    line.color = lv_color_hex(color);
+    line.opa = opa;
+    lv_draw_line(layer, &line);
+}
+
+/* One transparent object, fixed-phase sparks, no per-particle objects. */
+static void detail_burn_draw(lv_event_t *event)
+{
+    if (!s_a_burning) {
+        return;
+    }
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_area_t area;
+    lv_obj_get_coords(s_burn_layer, &area);
+    const float cx = area.x1 + 80;
+    const float cy = area.y1 + 64;
+    const float tau = 6.2831853f;
+    const float progress = (float)s_burn_ms / 2000.0f;
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.center.x = (int32_t)cx;
+    arc.center.y = (int32_t)cy;
+    arc.radius = POMO_RING_SIZE / 2;
+    arc.width = POMO_RING_WIDTH;
+    arc.start_angle = 270;
+    arc.end_angle = 270 + (int32_t)(progress * 360);
+    arc.color = lv_color_hex(POMO_COLOR_RING_BG);
+    arc.opa = LV_OPA_COVER;
+    if (s_burn_ms > 0) {
+        lv_draw_arc(layer, &arc);
+    }
+    const float angle = progress * tau - tau / 4;
+    const float radius = POMO_RING_SIZE / 2.0f - POMO_RING_WIDTH / 2.0f;
+    const float hx = cx + radius * cosf(angle);
+    const float hy = cy + radius * sinf(angle);
+    const uint32_t phase = s_burn_ms / 45;
+    for (uint32_t i = 0; i < 8; ++i) {
+        const uint32_t seed = (phase * 97 + i * 53 + 17) % 251;
+        const float a = seed * tau / 251;
+        const float length = 2.5f + ((seed * 31) % 61) / 10.0f;
+        spark_line(layer, hx + cosf(a), hy + sinf(a),
+                   cosf(a) * length, sinf(a) * length,
+                   i % 3 == 0 ? 0xFFFFFF : 0xDFEDFF,
+                   (uint8_t)(150 + seed % 106));
+    }
+    for (uint32_t i = 0; i < 10; ++i) {
+        const uint32_t age = (s_burn_ms + i * 19) % 180;
+        if (age > s_burn_ms) {
+            continue;
+        }
+        const uint32_t birth = s_burn_ms - age;
+        const uint32_t seed = (birth / 19 * 73 + i * 29) % 251;
+        const float a = seed * tau / 251;
+        const float u = age / 180.0f;
+        const float old_angle = birth / 2000.0f * tau - tau / 4;
+        const float distance = (3 + seed % 8) * u;
+        const float x = cx + radius * cosf(old_angle) + cosf(a) * distance;
+        const float y = cy + radius * sinf(old_angle) + sinf(a) * distance + u * u;
+        spark_line(layer, x, y, -cosf(a) * (2.6f * (1 - u) + .3f),
+                   -sinf(a) * (2.6f * (1 - u) + .3f),
+                   0xDFEDFF, (uint8_t)(220 * (1 - u)));
+        if (i % 4 == 0) {
+            spark_line(layer, x - 1, y, 2, 0, 0xFFFFFF, (uint8_t)(150 * (1 - u)));
+            spark_line(layer, x, y - 1, 0, 2, 0xFFFFFF, (uint8_t)(150 * (1 - u)));
+        }
+    }
+    spark_line(layer, hx, hy, 1, 0, 0xFFFFFF, LV_OPA_COVER);
+}
+
+static bool detail_burn_create(void)
+{
+    s_burn_layer = lv_obj_create(s_content);
+    if (s_burn_layer == NULL) {
+        return false;
+    }
+    lv_obj_remove_style_all(s_burn_layer);
+    lv_obj_set_size(s_burn_layer, TOOLS_SCREEN_W, 128);
+    lv_obj_set_pos(s_burn_layer, 0, 0);
+    lv_obj_clear_flag(s_burn_layer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_burn_layer, detail_burn_draw, LV_EVENT_DRAW_MAIN, NULL);
+    return true;
+}
+
+/* Called both on input samples (including release) and on the App timer.
+ * Poll the Service before deciding: natural phase completion wins. */
+static void detail_hold_update(bool a_down)
+{
+    if (!s_a_pending) {
+        if (!a_down) {
+            s_a_consumed = false;
+        }
+        return;
+    }
+    xiaomiao_pomodoro_service_poll();
+    xiaomiao_pomodoro_snapshot_t snap;
+    if (s_view != VIEW_DETAIL || s_back_pending ||
+        xiaomiao_screen_idle_input_swallowed() ||
+        xiaomiao_pomodoro_service_get_snapshot(&snap) != ESP_OK ||
+        snap.state != s_a_stage) {
+        detail_hold_abort();
+        s_a_consumed = a_down;
+        if (s_view == VIEW_DETAIL) {
+            detail_refresh();
+        }
+        return;
+    }
+    const int64_t elapsed = esp_timer_get_time() - s_a_started_us;
+    if (!a_down) {
+        const bool short_press = elapsed < POMO_HOLD_US &&
+            s_keypad != NULL &&
+            lv_indev_get_state(s_keypad) == LV_INDEV_STATE_RELEASED;
+        detail_hold_abort();
+        s_a_consumed = false;
+        if (short_press) {
+            xiaomiao_pomodoro_service_pause();
+        }
+        detail_refresh();
+        return;
+    }
+    if (elapsed < POMO_HOLD_US) {
+        return;
+    }
+    if (!s_a_burning) {
+        if (!detail_burn_create()) {
+            detail_hold_abort();
+            s_a_consumed = true;
+            return;
+        }
+        s_a_burning = true;
+        s_burn_started_us = esp_timer_get_time();
+        detail_refresh();
+    }
+    const int64_t burn_elapsed = esp_timer_get_time() - s_burn_started_us;
+    if (burn_elapsed >= POMO_BURN_US) {
+        detail_hold_abort();
+        s_a_consumed = true;
+        xiaomiao_pomodoro_service_reset();
+        detail_refresh();
+        return;
+    }
+    s_burn_ms = (uint32_t)(burn_elapsed / 1000);
+    lv_obj_invalidate(s_burn_layer);
 }
 
 static uint8_t detail_quick_minutes(uint8_t current, int step)
@@ -1117,6 +1305,10 @@ static void tools_show_view(view_t view)
         return;
     }
 
+    detail_hold_abort();
+    s_a_consumed = s_keypad != NULL &&
+        lv_indev_get_state(s_keypad) == LV_INDEV_STATE_PRESSED &&
+        lv_indev_get_key(s_keypad) == LV_KEY_ENTER;
     s_view = view;
     s_mode = MODE_PLAIN;
     s_option_index = 0;
@@ -1413,6 +1605,10 @@ static void tools_apply_back(void)
 static void tools_keypad_sample_cb(lv_event_t *event)
 {
     (void)event;
+    if (s_keypad != NULL) {
+        detail_hold_update(lv_indev_get_state(s_keypad) == LV_INDEV_STATE_PRESSED &&
+                           lv_indev_get_key(s_keypad) == LV_KEY_ENTER);
+    }
     if (s_keypad != NULL &&
         lv_indev_get_state(s_keypad) == LV_INDEV_STATE_RELEASED) {
         s_quick_latched_key = 0;
@@ -1428,6 +1624,10 @@ static void tools_key_cb(lv_event_t *event)
     const uint32_t key = lv_event_get_key(event);
     if (key != s_quick_latched_key) {
         s_quick_latched_key = 0;
+    }
+
+    if (key == LV_KEY_ENTER && s_a_consumed) {
+        return;
     }
 
     if (key == LV_KEY_ESC) {
@@ -1470,7 +1670,16 @@ static void tools_key_cb(lv_event_t *event)
     /* Detail view. */
     switch (key) {
     case LV_KEY_ENTER:
-        detail_action();
+        detail_refresh();
+        s_a_consumed = true;
+        if (detail_running(s_snap.state)) {
+            s_a_pending = true;
+            s_a_stage = s_snap.state;
+            s_a_started_us = esp_timer_get_time();
+        }
+        else {
+            detail_action();
+        }
         break;
     case LV_KEY_LEFT:
     case LV_KEY_RIGHT:
@@ -1512,6 +1721,9 @@ static void tools_b_release_timer_cb(lv_timer_t *timer)
         return;
     }
 
+    detail_hold_update(s_keypad != NULL &&
+                       lv_indev_get_state(s_keypad) == LV_INDEV_STATE_PRESSED &&
+                       lv_indev_get_key(s_keypad) == LV_KEY_ENTER);
     if (s_view != VIEW_DETAIL) {
         return;
     }
@@ -1611,6 +1823,10 @@ static void tools_open(void)
     s_group = group;
     s_keypad = keypad;
     s_quick_latched_key = 0;
+    s_a_consumed = false;
+    s_a_pending = false;
+    s_a_burning = false;
+    s_burn_layer = NULL;
     s_b_latched = false;
     s_back_pending = false;
     s_view = VIEW_MENU;
@@ -1641,6 +1857,9 @@ static void tools_close(void)
         lv_timer_delete(s_b_release_timer);
         s_b_release_timer = NULL;
     }
+
+    detail_hold_abort();
+    s_a_consumed = false;
 
     /* Stop the sweep before the content tree goes away. */
     tools_band_stop();
